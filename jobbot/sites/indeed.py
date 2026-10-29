@@ -53,7 +53,7 @@ class Indeed(JobSite):
         return "https://secure.indeed.com/account/login"
 
     def is_logged_in(self) -> bool:
-        self.page.goto("https://profile.indeed.com/")
+        self.goto("https://profile.indeed.com/")
         self.page.wait_for_load_state("domcontentloaded")
         return not re.search(r"secure\.indeed\.com/(auth|account/login)", self.page.url)
 
@@ -65,7 +65,7 @@ class Indeed(JobSite):
         seen: set[str] = set()
         for page_num in range(s.max_pages):
             params["start"] = page_num * PAGE_SIZE
-            self.page.goto(f"{self.base}/jobs?{urlencode(params)}")
+            self.goto(f"{self.base}/jobs?{urlencode(params)}")
             try:
                 self.page.locator(CARD).first.wait_for(timeout=20000)
             except PlaywrightTimeout:
@@ -93,7 +93,7 @@ class Indeed(JobSite):
         return jobs
 
     def open(self, job: Job) -> ApplyResult | None:
-        self.page.goto(job.url)
+        self.goto(job.url)
         try:
             self.page.locator(DESCRIPTION).first.wait_for(timeout=15000)
             job.description = self.page.locator(DESCRIPTION).first.inner_text()

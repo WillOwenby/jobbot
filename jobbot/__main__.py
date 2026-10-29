@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         from .sites import SITES
         with open_browser(cfg.browser) as context:
             site = SITES[args.site](context, cfg, filler=None, prompter=Prompter("review"))
-            site.page.goto(site.login_url)
+            site.goto(site.login_url)
             input(f"Log in to {args.site} in the browser, then press Enter to save the session... ")
             print("Logged in." if site.is_logged_in() else "Still not logged in; try again.")
         return 0

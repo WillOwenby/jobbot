@@ -127,3 +127,25 @@ def test_linkedin_unknown_required_question_discards_in_auto_mode(context, cfg):
     assert result.questions == ["Favorite color"]
     assert site.page.evaluate("window.discarded") is True
     assert not site.page.evaluate("window.submitted")
+
+
+def test_goto_retries_when_site_redirects_mid_load(context, cfg):
+    from playwright.sync_api import Error as PlaywrightError
+
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    calls = []
+
+    class FlakyPage:
+        url = "https://www.linkedin.com/feed/"
+
+        def goto(self, url, **kw):
+            calls.append(url)
+            if len(calls) == 1:
+                raise PlaywrightError('Page.goto: Navigation to "x" is interrupted by another navigation to "x"')
+
+        def wait_for_load_state(self, *a, **kw):
+            pass
+
+    site.page = FlakyPage()
+    assert site.is_logged_in()
+    assert len(calls) == 2

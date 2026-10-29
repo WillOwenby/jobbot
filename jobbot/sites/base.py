@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Iterator
 
 from playwright.sync_api import BrowserContext, Locator
+from playwright.sync_api import Error as PlaywrightError
 
 from ..config import Config
 from ..forms import FormFiller
@@ -24,10 +25,21 @@ class JobSite(ABC):
         self.prompter = prompter
         self.page = context.pages[0] if context.pages else context.new_page()
 
+    def goto(self, url: str, attempts: int = 3) -> None:
+        """page.goto that tolerates the site redirecting mid-load (e.g. LinkedIn right after login)."""
+        for attempt in range(attempts):
+            try:
+                self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                return
+            except PlaywrightError as e:
+                if "interrupted by another navigation" not in str(e) or attempt == attempts - 1:
+                    raise
+                self.page.wait_for_load_state("domcontentloaded")
+
     def ensure_logged_in(self) -> None:
         if self.is_logged_in():
             return
-        self.page.goto(self.login_url)
+        self.goto(self.login_url)
         self.prompter.wait_for_login(self.name)
         if not self.is_logged_in():
             raise RuntimeError(f"still not logged in to {self.name}")

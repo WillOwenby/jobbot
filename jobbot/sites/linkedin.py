@@ -51,7 +51,7 @@ class LinkedIn(JobSite):
     login_url = "https://www.linkedin.com/login"
 
     def is_logged_in(self) -> bool:
-        self.page.goto("https://www.linkedin.com/feed/")
+        self.goto("https://www.linkedin.com/feed/")
         self.page.wait_for_load_state("domcontentloaded")
         return "/feed" in self.page.url
 
@@ -69,7 +69,7 @@ class LinkedIn(JobSite):
         seen: set[str] = set()
         for page_num in range(s.max_pages):
             params["start"] = page_num * PAGE_SIZE
-            self.page.goto(f"{SEARCH_URL}?{urlencode(params)}")
+            self.goto(f"{SEARCH_URL}?{urlencode(params)}")
             try:
                 self.page.locator(CARD).first.wait_for(timeout=15000)
             except PlaywrightTimeout:
@@ -102,7 +102,7 @@ class LinkedIn(JobSite):
         return jobs
 
     def open(self, job: Job) -> ApplyResult | None:
-        self.page.goto(job.url)
+        self.goto(job.url)
         try:
             self.page.locator(DESCRIPTION).first.wait_for(timeout=15000)
             job.description = self.page.locator(DESCRIPTION).first.inner_text()
