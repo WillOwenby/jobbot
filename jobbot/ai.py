@@ -44,6 +44,8 @@ class AIError(RuntimeError):
 class FitScore(BaseModel):
     score: int
     reason: str
+    hard_exclusion: str  # empty unless the posting clearly breaks a hard exclusion
+    concerns: list[str]  # ambiguous conflicts for the candidate to review
 
 
 class ScreeningAnswer(BaseModel):
@@ -114,10 +116,23 @@ class ResumeAI:
         return "".join(b.text for b in resp.content if b.type == "text").strip()
 
     def score_fit(self, job: Job) -> FitScore:
+        criteria = self.cfg.job_criteria.strip() or "(none given; use the candidate's notes)"
         prompt = f"""\
-Rate how well the candidate fits this job, from 0 (no fit) to 100 (excellent fit). \
-Weigh required skills, seniority, domain, location/remote constraints and anything \
-in the candidate's notes. Give a one- or two-sentence reason.
+Evaluate this job for the candidate against their resume and job-search criteria.
+
+<criteria>
+{criteria}
+</criteria>
+
+- score: 0 (no fit) to 100 (excellent fit), weighing the criteria's priorities, \
+the candidate's actual background, seniority, compensation and remote fit.
+- reason: one or two sentences.
+- hard_exclusion: only when the posting clearly and unambiguously breaks one of \
+the hard exclusions, name it briefly (e.g. "salary range max $140k"). Otherwise "". \
+Never exclude on a single ambiguous keyword or missing information.
+- concerns: possible conflicts the candidate should check before applying \
+(e.g. salary not listed, travel amount unclear, may be hands-on coding). \
+Empty if none.
 
 <job>
 Title: {job.title}

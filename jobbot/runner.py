@@ -26,8 +26,9 @@ def build_ai(cfg: Config):
 
 
 class Runner:
-    def __init__(self, cfg: Config, mode: str, max_applications: int | None = None):
+    def __init__(self, cfg: Config, mode: str, max_applications: int | None = None, recheck: bool = False):
         self.cfg = cfg
+        self.recheck = recheck
         self.mode = mode
         self.limit = max_applications or cfg.limits.max_applications_per_site
         self.tracker = Tracker(cfg.database)
@@ -55,7 +56,7 @@ class Runner:
                     if applied >= self.limit:
                         log.info("[%s] reached limit of %d applications", site.name, self.limit)
                         return
-                    if self.tracker.is_done(job):
+                    if self.tracker.is_done(job, self.recheck):
                         continue
                     result = self._process(site, job)
                     self._log(job, result)
@@ -77,15 +78,22 @@ class Runner:
             from .ai import AIError
             try:
                 fit = self.ai.score_fit(job)
-                job.fit_score, job.fit_reason = fit.score, fit.reason
+                job.fit_score, job.fit_reason, job.concerns = fit.score, fit.reason, fit.concerns
                 log.info("    fit %d/100: %s", fit.score, fit.reason)
+                for concern in fit.concerns:
+                    log.info("    concern: %s", concern)
+                if fit.hard_exclusion:
+                    return ApplyResult(Status.SKIPPED, f"excluded: {fit.hard_exclusion}")
                 if fit.score < self.cfg.ai.min_fit_score:
                     return ApplyResult(Status.SKIPPED, f"fit score {fit.score} < {self.cfg.ai.min_fit_score}")
             except AIError as e:
                 log.warning("    could not score fit: %s", e)
 
         if self.mode == "dry-run":
-            return ApplyResult(Status.DRY_RUN, "would apply")
+            return ApplyResult(Status.DRY_RUN, "would apply" + (" (has concerns)" if job.concerns else ""))
+        if self.mode == "auto" and job.concerns:
+            # Never auto-submit a job with open questions; leave it for a person.
+            return ApplyResult(Status.FLAGGED, "; ".join(job.concerns))
 
         self.answerer.start_job(job, *self._cover_letter(job))
         return site.apply(job)

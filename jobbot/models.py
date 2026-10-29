@@ -15,6 +15,7 @@ class Job:
     description: str = ""
     fit_score: int | None = None
     fit_reason: str = ""
+    concerns: list[str] = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -25,6 +26,7 @@ class Status(str, Enum):
     APPLIED = "applied"
     ALREADY_APPLIED = "already_applied"
     SKIPPED = "skipped"
+    FLAGGED = "flagged"
     NEEDS_INPUT = "needs_input"
     FAILED = "failed"
     DRY_RUN = "dry_run"

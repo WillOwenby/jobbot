@@ -11,6 +11,10 @@ class Prompter:
     def confirm_submit(self, job: Job) -> bool:
         if not self.interactive:
             return True
+        if job.fit_score is not None:
+            print(f"\n    Fit {job.fit_score}/100: {job.fit_reason}")
+        for concern in job.concerns:
+            print(f"    ! {concern}")
         reply = input(f"\n>>> Submit application for '{job.title}' at {job.company}? "
                       "Check the browser first. [y/N] ")
         return reply.strip().lower() in ("y", "yes")

@@ -12,7 +12,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS applications (
     key TEXT PRIMARY KEY, site TEXT, job_id TEXT, title TEXT, company TEXT,
     location TEXT, url TEXT, status TEXT, detail TEXT, questions TEXT,
-    fit_score INTEGER, fit_reason TEXT, updated_at TEXT
+    fit_score INTEGER, fit_reason TEXT, concerns TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS ai_answers (
     question TEXT PRIMARY KEY, answer TEXT, created_at TEXT
@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS ai_answers (
 """
 
 DONE = (Status.APPLIED.value, Status.ALREADY_APPLIED.value)
+# Jobs already judged; not re-scored on later runs unless --recheck is passed.
+JUDGED = DONE + (Status.SKIPPED.value, Status.FLAGGED.value)
 
 
 class Tracker:
@@ -27,16 +29,17 @@ class Tracker:
         self.conn = sqlite3.connect(path)
         self.conn.executescript(SCHEMA)
 
-    def is_done(self, job: Job) -> bool:
+    def is_done(self, job: Job, recheck: bool = False) -> bool:
         row = self.conn.execute("SELECT status FROM applications WHERE key = ?", (job.key,)).fetchone()
-        return bool(row and row[0] in DONE)
+        return bool(row and row[0] in (DONE if recheck else JUDGED))
 
     def record(self, job: Job, result: ApplyResult) -> None:
         self.conn.execute(
-            "INSERT OR REPLACE INTO applications VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO applications VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (job.key, job.site, job.job_id, job.title, job.company, job.location, job.url,
              result.status.value, result.detail, json.dumps(result.questions),
-             job.fit_score, job.fit_reason, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+             job.fit_score, job.fit_reason, json.dumps(job.concerns),
+             datetime.now(timezone.utc).isoformat(timespec="seconds")),
         )
         self.conn.commit()
 

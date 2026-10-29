@@ -56,6 +56,7 @@ class AIConfig:
     answer_questions: bool = True
     cover_letters: bool = True
     about_me: str = ""
+    job_criteria: str = ""
 
 
 @dataclass

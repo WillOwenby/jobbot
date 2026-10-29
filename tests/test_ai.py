@@ -35,7 +35,7 @@ def make_ai(cfg, messages):
 
 
 def test_score_fit_request_shape_and_clamp(cfg):
-    msgs = FakeMessages(parsed=FitScore(score=130, reason="great"))
+    msgs = FakeMessages(parsed=FitScore(score=130, reason="great", hard_exclusion="", concerns=[]))
     result = make_ai(cfg, msgs).score_fit(JOB)
     assert result.score == 100
     call = msgs.calls[0]
@@ -77,3 +77,40 @@ def test_cover_letter_pdf(tmp_path):
     path = write_cover_letter_pdf("Dear Hiring Manager, “thanks” — Jane", JOB, str(tmp_path))
     assert path.endswith(".pdf")
     assert open(path, "rb").read(4) == b"%PDF"
+
+
+def test_fit_prompt_includes_criteria(cfg):
+    msgs = FakeMessages(parsed=FitScore(score=80, reason="ok", hard_exclusion="", concerns=[]))
+    ai = make_ai(cfg, msgs)
+    ai.cfg.job_criteria = "Minimum base salary $154,000"
+    ai.score_fit(JOB)
+    assert "Minimum base salary $154,000" in msgs.calls[0]["messages"][0]["content"]
+
+
+def _runner(cfg, tmp_path, mode, fit):
+    from jobbot.runner import Runner
+    cfg.database = str(tmp_path / "t.db")
+    runner = Runner(cfg, mode)
+    runner.ai = SimpleNamespace(score_fit=lambda job: fit)
+    site = SimpleNamespace(open=lambda job: None,
+                           apply=lambda job: (_ for _ in ()).throw(AssertionError("must not apply")))
+    return runner, site
+
+
+def test_hard_exclusion_skips(cfg, tmp_path):
+    fit = FitScore(score=90, reason="", hard_exclusion="salary max $140k", concerns=[])
+    runner, site = _runner(cfg, tmp_path, "auto", fit)
+    job = Job(**{**JOB.__dict__, "concerns": []})
+    result = runner._process(site, job)
+    assert result.detail == "excluded: salary max $140k"
+
+
+def test_concerns_flag_instead_of_auto_submit(cfg, tmp_path):
+    fit = FitScore(score=90, reason="", hard_exclusion="", concerns=["salary not listed"])
+    runner, site = _runner(cfg, tmp_path, "auto", fit)
+    job = Job(**{**JOB.__dict__, "concerns": []})
+    result = runner._process(site, job)
+    assert result.status.value == "flagged"
+    runner.tracker.record(job, result)
+    assert runner.tracker.is_done(job)                 # not re-scored next run
+    assert not runner.tracker.is_done(job, recheck=True)

@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="site to run (repeatable; default: sites in config)")
     p_run.add_argument("--mode", choices=MODES, help="override the mode in config")
     p_run.add_argument("--max", type=int, help="max applications per site this run")
+    p_run.add_argument("--recheck", action="store_true",
+                       help="re-evaluate jobs skipped or flagged on earlier runs")
 
     p_report = sub.add_parser("report", help="show application history")
     p_report.add_argument("--csv", help="also export to this CSV file")
@@ -62,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         from .runner import Runner
         mode = args.mode or cfg.mode
-        runner = Runner(cfg, mode, args.max)
+        runner = Runner(cfg, mode, args.max, args.recheck)
         try:
             stats = runner.run(args.site or cfg.sites)
         except KeyboardInterrupt:
@@ -80,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
             fit = f"{r['fit_score']:>3}" if r["fit_score"] is not None else "  -"
             print(f"{r['updated_at']}  {r['status']:<15} fit {fit}  {r['title']} @ {r['company']}"
                   + (f"  ({r['detail']})" if r["detail"] else ""))
+            if r["status"] == "flagged":
+                print(f"{'':>38}{r['url']}")
         if args.csv:
             print(f"Wrote {tracker.export_csv(args.csv)} rows to {args.csv}")
         return 0

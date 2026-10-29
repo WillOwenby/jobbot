@@ -59,6 +59,12 @@ ai:
     - US citizen, no sponsorship needed
     - Prefer remote; open to hybrid in Austin
     - Not interested in crypto or gambling companies
+  # What you're looking for. Claude scores each job against this; a clear breach of a
+  # "hard exclusion" skips the job, and anything ambiguous is flagged for you instead.
+  job_criteria: |
+    TARGET ROLES: backend engineer roles in fintech or healthcare.
+    HARD EXCLUSIONS: base salary max below $120,000; on-site more than 2 days/week.
+    When something is ambiguous (e.g. salary not listed), list it as a concern.
 
 limits:
   max_applications_per_site: 15
