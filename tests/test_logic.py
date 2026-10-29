@@ -26,6 +26,9 @@ def test_choose_option():
     assert choose_option("Bachelor's", ["Select", "High school", "Bachelor's Degree", "Master's Degree"]) == 2
     assert choose_option("Select an option", opts) is None
     assert choose_option("Maybe", opts) is None
+    travel = ["Select an option", "None", "Up to 10%", "Up to 25%"]
+    assert choose_option("Yes, up to 10%", travel) == 2
+    assert choose_option("Yes, up to 10%", ["Yes", "No"]) == 0
 
 
 def test_answer_book_rules_beat_profile(cfg):

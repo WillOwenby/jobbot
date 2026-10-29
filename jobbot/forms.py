@@ -42,6 +42,10 @@ def choose_option(answer: str, options: list[str]) -> int | None:
     for i, o in candidates:
         if a in o:
             return i
+    # e.g. answer "Yes, up to 10%" -> option "Up to 10%"; skip short options like "No".
+    for i, o in candidates:
+        if len(o) >= 3 and o in a:
+            return i
     return None
 
 
