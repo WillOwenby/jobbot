@@ -39,6 +39,25 @@ class Tracker:
             return False  # flagged only because scoring failed (older versions); score it now
         return status in (DONE if recheck else JUDGED)
 
+    def judged_duplicate(self, job: Job) -> sqlite3.Row | None:
+        """Another listing of the same job (same title and company) that was already judged.
+        Companies often post one job in several cities, each with its own listing."""
+        if not job.title or not job.company:
+            return None
+        self.conn.row_factory = sqlite3.Row
+        try:
+            rows = self.conn.execute(
+                "SELECT key, status, detail FROM applications WHERE key != ? "
+                "AND lower(trim(title)) = lower(trim(?)) AND lower(trim(company)) = lower(trim(?))",
+                (job.key, job.title, job.company)).fetchall()
+        finally:
+            self.conn.row_factory = None
+        for row in rows:
+            unscored = row["status"] == Status.FLAGGED.value and (row["detail"] or "").startswith(UNSCORED_PREFIXES)
+            if row["status"] in JUDGED and not unscored:
+                return row
+        return None
+
     def record(self, job: Job, result: ApplyResult) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO applications VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

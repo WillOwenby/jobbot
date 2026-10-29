@@ -82,6 +82,8 @@ class Runner:
     def _process(self, site: JobSite, job: Job) -> ApplyResult:
         if reason := reject_reason(job, self.cfg.filters):
             return ApplyResult(Status.SKIPPED, reason)
+        if not self.recheck and (dup := self.tracker.judged_duplicate(job)):
+            return ApplyResult(Status.SKIPPED, f"same job as another listing (already {dup['status']})")
         if early := site.open(job):
             return early
         if reason := reject_reason(job, self.cfg.filters):  # now with the description

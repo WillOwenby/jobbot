@@ -233,3 +233,21 @@ def test_shortlist_command(cfg, tmp_path, capsys, monkeypatch):
     assert cli.main(["shortlist"]) == 0
     out = capsys.readouterr().out
     assert "[77/100] Python Developer @ Acme" in out and "https://x" in out and "! salary not listed" in out
+
+
+def test_duplicate_listing_is_not_scored_twice(cfg, tmp_path):
+    from jobbot.models import ApplyResult, Status
+    runner, site = _runner(cfg, tmp_path, "dry-run", None)
+    first = Job(**{**JOB.__dict__, "job_id": "100", "title": "Group Product Manager", "company": "Coinbase"})
+    runner.tracker.record(first, ApplyResult(Status.SKIPPED, "fit score 15 < 65"))
+    opened = []
+    site.open = lambda job: opened.append(job)
+    runner.ai = SimpleNamespace(score_fit=lambda job: (_ for _ in ()).throw(AssertionError("no AI call")))
+    copy = Job(**{**JOB.__dict__, "job_id": "200", "title": "Group Product Manager ", "company": "coinbase"})
+    result = runner._process(site, copy)
+    assert result.status == Status.SKIPPED and "same job as another listing" in result.detail
+    assert opened == []                                # not even opened
+
+    # A listing whose earlier copy failed to score is still tried.
+    runner.tracker.record(first, ApplyResult(Status.FAILED, "not scored: timeout"))
+    assert runner.tracker.judged_duplicate(copy) is None
