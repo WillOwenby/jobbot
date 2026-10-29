@@ -298,3 +298,40 @@ def test_linkedin_waits_for_description_text(context, cfg):
               "https://www.linkedin.com/jobs/view/4011112222/")
     assert site.open(job) is None
     assert job.description.count("Lead the enterprise RPA program.") == 20
+
+
+def workplace_page(tag):
+    return NEW_LAYOUT_JOB.replace(
+        '<button aria-label="Easy Apply to this job">Easy Apply</button>',
+        f'<a href="https://www.linkedin.com/jobs/view/4482216525/"><span>{tag}</span></a>'
+        '<a href="https://www.linkedin.com/jobs/view/4482216525/"><span>Full-time</span></a>'
+        '<button aria-label="Easy Apply to this job">Easy Apply</button>')
+
+
+def test_linkedin_reads_workplace_tag(context, cfg):
+    for tag in ("Remote", "Hybrid", "On-site"):
+        context.unroute("https://www.linkedin.com/**")
+        body = workplace_page(tag)
+        context.route("https://www.linkedin.com/**",
+                      lambda route: route.fulfill(body=body, content_type="text/html"))
+        site = LinkedIn(context, cfg, None, Prompter("auto"))
+        job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
+        site.open(job)
+        assert job.workplace == tag
+
+
+def test_non_remote_jobs_skipped_before_ai(cfg, tmp_path):
+    from types import SimpleNamespace
+    from jobbot.runner import Runner
+    cfg.database = str(tmp_path / "t.db")
+    cfg.search.remote = True
+    runner = Runner(cfg, "dry-run")
+    runner.ai = SimpleNamespace(score_fit=lambda job: (_ for _ in ()).throw(AssertionError("no AI call")))
+
+    def open_job(job):
+        job.workplace, job.description = "Hybrid", "x" * 500
+
+    site = SimpleNamespace(open=open_job)
+    job = Job("linkedin", "1", "IT Manager", "Acme", "", "u")
+    result = runner._process(site, job)
+    assert (result.status, result.detail) == (Status.SKIPPED, "listed as Hybrid, not remote")

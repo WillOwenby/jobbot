@@ -93,6 +93,12 @@ sel => [...document.querySelectorAll(sel)].map(e => e.innerText || '')
 DESCRIPTION_READY_JS = f"""
 ([sel, min, more]) => ({BEST_TEXT_JS.strip()})(sel).length > min || !!document.querySelector(more)
 """
+# The job's workplace tag ("Remote" / "Hybrid" / "On-site") is a short link on its own page.
+WORKPLACE_JS = r"""
+() => [...document.querySelectorAll("a[href*='/jobs/view/']")]
+        .map(a => (a.innerText || '').trim())
+        .find(t => /^(remote|hybrid|on-site|onsite)$/i.test(t)) || ''
+"""
 EXPAND_DESCRIPTION = "[data-testid='expandable-text-button'], button[aria-label*='see more' i]"
 TOP_CARD_COMPANY = ".job-details-jobs-unified-top-card__company-name, a[href*='/company/']"
 EASY_APPLY_BUTTON = ("button.jobs-apply-button:has-text('Easy Apply'), button[aria-label*='Easy Apply'], "
@@ -224,6 +230,7 @@ class LinkedIn(JobSite):
             main = self.page.locator("main")
             job.description = (main.first if main.count() else self.page.locator("body")).inner_text()
         log.debug("    description: %d chars", len(job.description))
+        job.workplace = self.page.evaluate(WORKPLACE_JS)
         if self.debug:
             self.save_debug("job-page")
         # The page title is "Job title | Company | LinkedIn" on every layout so far.

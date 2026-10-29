@@ -16,6 +16,7 @@ class Job:
     fit_score: int | None = None
     fit_reason: str = ""
     concerns: list[str] = field(default_factory=list)
+    workplace: str = ""  # "Remote", "Hybrid" or "On-site" when the site says so
 
     @property
     def key(self) -> str:

@@ -86,6 +86,9 @@ class Runner:
             return early
         if reason := reject_reason(job, self.cfg.filters):  # now with the description
             return ApplyResult(Status.SKIPPED, reason)
+        if self.cfg.search.remote and job.workplace.lower() in ("hybrid", "on-site", "onsite"):
+            # Free check before any AI call: the site's own workplace tag rules it out.
+            return ApplyResult(Status.SKIPPED, f"listed as {job.workplace}, not remote")
 
         if self.ai:
             from .ai import AIError, AIFatalError
