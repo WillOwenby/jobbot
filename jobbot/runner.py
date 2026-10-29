@@ -111,6 +111,9 @@ class Runner:
                 log.warning("    could not score fit: %s", e)
                 return ApplyResult(Status.FAILED, f"not scored: {e}")
 
+        if job.external:
+            # Passed the filters and scoring, but jobbot can't apply on a company site.
+            return ApplyResult(Status.APPLY_YOURSELF, f"fit {job.fit_score}; apply on the company site")
         if self.mode == "dry-run":
             return ApplyResult(Status.DRY_RUN, "would apply" + (" (has concerns)" if job.concerns else ""))
         if self.mode == "auto" and job.concerns:

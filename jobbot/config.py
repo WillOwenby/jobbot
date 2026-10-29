@@ -18,6 +18,7 @@ class SearchConfig:
     remote: bool = False
     posted_within_days: int = 7
     max_pages: int = 5
+    include_external_jobs: bool = False  # also score jobs that apply on the company's site
 
 
 @dataclass

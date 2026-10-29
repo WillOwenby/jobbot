@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS ai_answers (
 
 DONE = (Status.APPLIED.value, Status.ALREADY_APPLIED.value)
 # Jobs already judged; not re-scored on later runs unless --recheck is passed.
-JUDGED = DONE + (Status.SKIPPED.value, Status.FLAGGED.value)
+JUDGED = DONE + (Status.SKIPPED.value, Status.FLAGGED.value, Status.APPLY_YOURSELF.value)
 UNSCORED_PREFIXES = ("not scored", "couldn't read the job description")
 
 
@@ -64,6 +64,15 @@ class Tracker:
                 writer.writerow(rows[0].keys())
                 writer.writerows(tuple(r) for r in rows)
         return len(rows)
+
+    def shortlist(self) -> list[sqlite3.Row]:
+        self.conn.row_factory = sqlite3.Row
+        try:
+            return self.conn.execute(
+                "SELECT * FROM applications WHERE status = ? ORDER BY fit_score DESC, updated_at DESC",
+                (Status.APPLY_YOURSELF.value,)).fetchall()
+        finally:
+            self.conn.row_factory = None
 
     def unanswered_questions(self) -> list[tuple[str, int]]:
         counts: dict[str, int] = {}

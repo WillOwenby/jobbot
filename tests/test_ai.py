@@ -199,3 +199,37 @@ def test_scoring_can_use_its_own_model_and_effort(cfg):
     ai.cover_letter(JOB)
     assert msgs.calls[1]["model"] == "claude-opus-5-5"     # letters keep the main model
     assert msgs.calls[1]["output_config"] == {"effort": "medium"}
+
+
+def test_external_job_goes_to_shortlist_only_if_it_passes(cfg, tmp_path, capsys):
+    from jobbot.__main__ import main
+    from jobbot.models import Status
+    good = FitScore(score=80, reason="Strong Epic leadership fit", hard_exclusion="", concerns=["salary not listed"])
+    for mode in ("dry-run", "review", "auto"):
+        runner, site = _runner(cfg, tmp_path, mode, good)
+        job = Job(**{**JOB.__dict__, "concerns": [], "description": LONG_DESCRIPTION, "external": True})
+        result = runner._process(site, job)          # site.apply would raise: never called
+        assert result.status == Status.APPLY_YOURSELF, mode
+    runner.tracker.record(job, result)
+    assert runner.tracker.is_done(job)
+
+    low = FitScore(score=40, reason="", hard_exclusion="", concerns=[])
+    runner, site = _runner(cfg, tmp_path, "review", low)
+    job2 = Job(**{**JOB.__dict__, "job_id": "2", "concerns": [], "description": LONG_DESCRIPTION, "external": True})
+    assert runner._process(site, job2).status == Status.SKIPPED
+
+    rows = runner.tracker.shortlist()
+    assert [(r["job_id"], r["fit_score"]) for r in rows] == [("42", 80)]
+
+
+def test_shortlist_command(cfg, tmp_path, capsys, monkeypatch):
+    from jobbot import __main__ as cli
+    from jobbot.models import ApplyResult, Status
+    cfg.database = str(tmp_path / "t.db")
+    t = Tracker(cfg.database)
+    job = Job(**{**JOB.__dict__, "concerns": ["salary not listed"], "fit_score": 77, "fit_reason": "Good fit"})
+    t.record(job, ApplyResult(Status.APPLY_YOURSELF, "fit 77"))
+    monkeypatch.setattr(cli, "load_config", lambda path: cfg)
+    assert cli.main(["shortlist"]) == 0
+    out = capsys.readouterr().out
+    assert "[77/100] Python Developer @ Acme" in out and "https://x" in out and "! salary not listed" in out

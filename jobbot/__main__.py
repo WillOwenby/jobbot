@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 
@@ -38,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     p_report.add_argument("--csv", help="also export to this CSV file")
 
     sub.add_parser("questions", help="list questions that blocked applications")
+    sub.add_parser("shortlist", help="good matches to apply to yourself on the company's site")
     sub.add_parser("ai-answers", help="list answers the AI saved for reuse")
 
     args = parser.parse_args(argv)
@@ -92,6 +94,18 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{'':>38}{r['url']}")
         if args.csv:
             print(f"Wrote {tracker.export_csv(args.csv)} rows to {args.csv}")
+        return 0
+
+    if args.command == "shortlist":
+        rows = tracker.shortlist()
+        if not rows:
+            print("No apply-yourself jobs yet (turn on search.include_external_jobs).")
+        for r in rows:
+            print(f"\n[{r['fit_score']}/100] {r['title']} @ {r['company']}  ({r['location']})")
+            print(f"  {r['url']}")
+            print(f"  {r['fit_reason']}")
+            for c in json.loads(r["concerns"] or "[]"):
+                print(f"  ! {c}")
         return 0
 
     if args.command == "questions":

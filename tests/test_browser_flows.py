@@ -336,3 +336,27 @@ def test_non_remote_jobs_skipped_before_ai(cfg, tmp_path):
     job = Job("linkedin", "1", "IT Manager", "Acme", "", "u")
     result = runner._process(site, job)
     assert (result.status, result.detail) == (Status.SKIPPED, "listed as Hybrid, not remote")
+
+
+def test_external_jobs_are_scored_not_skipped(context, cfg):
+    page = NEW_LAYOUT_JOB.replace('<button aria-label="Easy Apply to this job">Easy Apply</button>',
+                                  '<button aria-label="Apply on company website">Apply</button>')
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=page, content_type="text/html"))
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
+    assert site.open(job).detail == "no Easy Apply button"     # default: Easy Apply only
+    cfg.search.include_external_jobs = True
+    job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
+    assert site.open(job) is None and job.external
+
+
+def test_search_drops_easy_apply_filter_for_external(context, cfg, monkeypatch):
+    urls = []
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    monkeypatch.setattr(site.context.request, "get",
+                        lambda url, **kw: urls.append(url) or FakeResponse(200, ""))
+    list(site.search("RPA Manager", "United States"))
+    cfg.search.include_external_jobs = True
+    list(site.search("RPA Manager", "United States"))
+    assert "f_AL=true" in urls[0] and "f_AL" not in urls[1]

@@ -13,6 +13,8 @@ search:
   remote: true
   posted_within_days: 7
   max_pages: 3
+  include_external_jobs: false  # true: also score jobs that apply on the company's site;
+                               # good ones are listed by `jobbot shortlist` to apply yourself
 
 filters:                      # whole-word, case-insensitive
   title_include: []           # if set, the title must contain at least one

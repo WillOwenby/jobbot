@@ -39,6 +39,7 @@ python -m jobbot run --site linkedin --max 5
 python -m jobbot report --csv history.csv
 python -m jobbot questions                 # questions it couldn't answer; add rules for them
 python -m jobbot ai-answers                # answers Claude saved for reuse; check them
+python -m jobbot shortlist                 # strong matches to apply to yourself (company-site jobs)
 ```
 
 **Modes**

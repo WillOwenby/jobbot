@@ -17,6 +17,7 @@ class Job:
     fit_reason: str = ""
     concerns: list[str] = field(default_factory=list)
     workplace: str = ""  # "Remote", "Hybrid" or "On-site" when the site says so
+    external: bool = False  # applies on the company's own site, so jobbot can't apply
 
     @property
     def key(self) -> str:
@@ -28,6 +29,7 @@ class Status(str, Enum):
     ALREADY_APPLIED = "already_applied"
     SKIPPED = "skipped"
     FLAGGED = "flagged"
+    APPLY_YOURSELF = "apply_yourself"
     NEEDS_INPUT = "needs_input"
     FAILED = "failed"
     DRY_RUN = "dry_run"

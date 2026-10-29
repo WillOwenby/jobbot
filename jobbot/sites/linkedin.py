@@ -139,12 +139,13 @@ class LinkedIn(JobSite):
         params = {
             "keywords": query,
             "location": location,
-            "f_AL": "true",  # Easy Apply only
             "f_TPR": f"r{s.posted_within_days * 86400}",
             "sortBy": "DD",
         }
         if s.remote:
             params["f_WT"] = "2"
+        if not s.include_external_jobs:
+            params["f_AL"] = "true"  # Easy Apply only
         try:
             yield from self._search_listing(params)
         except ListingUnavailable as e:
@@ -246,6 +247,9 @@ class LinkedIn(JobSite):
         if self.page.locator(ALREADY_APPLIED).count():
             return ApplyResult(Status.ALREADY_APPLIED)
         if not self.page.locator(EASY_APPLY_BUTTON).count():
+            if self.cfg.search.include_external_jobs:
+                job.external = True  # still worth scoring; you'd apply on the company site
+                return None
             self.save_debug("job-no-easy-apply")
             return ApplyResult(Status.SKIPPED, "no Easy Apply button")
         return None
