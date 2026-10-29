@@ -55,6 +55,7 @@ class AIConfig:
     min_fit_score: int = 60
     answer_questions: bool = True
     cover_letters: bool = True
+    cover_letter_example: str = ""
     about_me: str = ""
     job_criteria: str = ""
 
@@ -143,6 +144,7 @@ def load_config(path: str | Path) -> Config:
     cfg.browser.profile_dir = resolve(cfg.browser.profile_dir)
     cfg.database = resolve(cfg.database)
     cfg.output_dir = resolve(cfg.output_dir)
+    cfg.ai.cover_letter_example = resolve(cfg.ai.cover_letter_example)
     if not Path(cfg.profile.resume_path).is_file():
         raise ValueError(f"resume not found: {cfg.profile.resume_path}")
     return cfg

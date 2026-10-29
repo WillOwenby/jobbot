@@ -53,23 +53,33 @@ class ScreeningAnswer(BaseModel):
     confident: bool
 
 
-def read_resume_text(path: str) -> str:
+def read_document_text(path: str) -> str:
     p = Path(path)
-    if p.suffix.lower() == ".pdf":
+    suffix = p.suffix.lower()
+    if suffix == ".pdf":
         from pypdf import PdfReader
         text = "\n".join(page.extract_text() or "" for page in PdfReader(p).pages)
-    elif p.suffix.lower() in (".txt", ".md"):
+    elif suffix == ".docx":
+        import html
+        import zipfile
+        xml = zipfile.ZipFile(p).read("word/document.xml").decode()
+        paragraphs = re.findall(r"<w:p[ >].*?</w:p>", xml, re.S)
+        text = "\n".join(html.unescape("".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", para)))
+                         for para in paragraphs)
+    elif suffix in (".txt", ".md"):
         text = p.read_text()
     else:
-        raise ValueError(f"AI features need a .pdf, .txt or .md resume (got {p.suffix})")
+        raise ValueError(f"AI features need a .pdf, .docx, .txt or .md file (got {p.name})")
     if not text.strip():
         raise ValueError(f"no text could be extracted from {p}; is it a scanned image?")
     return text
 
 
 class ResumeAI:
-    def __init__(self, cfg: AIConfig, profile: ProfileConfig, resume_text: str, client=None):
+    def __init__(self, cfg: AIConfig, profile: ProfileConfig, resume_text: str, client=None,
+                 example_letter: str = ""):
         self.cfg = cfg
+        self.example_letter = example_letter.strip()
         self.client = client or anthropic.Anthropic()
         system = SYSTEM_PROMPT.format(
             name=f"{profile.first_name} {profile.last_name}", email=profile.email,
@@ -166,11 +176,23 @@ answer those instead."""
         return self._request(prompt, ScreeningAnswer).parsed_output
 
     def cover_letter(self, job: Job) -> str:
-        prompt = f"""\
-Write a cover letter from the candidate for the job below. Keep it under 300 words, \
-specific to this role and company, and grounded only in the resume. Start with \
-"Dear Hiring Manager," and end with the candidate's name. Output only the letter.
+        example = ""
+        if self.example_letter:
+            example = f"""
+Use the candidate's own master cover letter below as the model: keep their voice, \
+structure and strongest points, but rework it so it speaks to this specific role \
+and company. Leave out its contact header and date; those are added separately.
 
+<master_letter>
+{self.example_letter}
+</master_letter>
+"""
+        prompt = f"""\
+Write a cover letter from the candidate for the job below. Keep it under 350 words, \
+specific to this role and company, and grounded only in the resume. Start with \
+"Dear Hiring Manager," and end with "Sincerely," and the candidate's name. \
+Output only the letter.
+{example}
 <job>
 Title: {job.title}
 Company: {job.company}
@@ -180,7 +202,16 @@ Company: {job.company}
         return self._text(self._request(prompt))
 
 
-def write_cover_letter_pdf(text: str, job: Job, out_dir: str) -> str:
+def _latin1(text: str) -> str:
+    # Core PDF fonts are Latin-1 only; swap typographic characters for plain ones.
+    clean = (text.replace("’", "'").replace("‘", "'").replace("“", '"')
+             .replace("”", '"').replace("—", "-").replace("–", "-"))
+    return clean.encode("latin-1", "replace").decode("latin-1")
+
+
+def write_cover_letter_pdf(text: str, job: Job, out_dir: str, profile: ProfileConfig | None = None) -> str:
+    from datetime import date
+
     from fpdf import FPDF
 
     Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -189,10 +220,18 @@ def write_cover_letter_pdf(text: str, job: Job, out_dir: str) -> str:
     pdf = FPDF(format="Letter")
     pdf.set_margins(25, 25, 25)
     pdf.add_page()
+    if profile:
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(0, 8, _latin1(f"{profile.first_name} {profile.last_name}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", size=10)
+        contact = "  ·  ".join(filter(None, [profile.phone, profile.email, profile.linkedin_url]))
+        pdf.cell(0, 6, _latin1(contact), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(6)
+        pdf.set_font("Helvetica", size=11)
+        today = date.today()
+        pdf.cell(0, 6, f"{today:%B} {today.day}, {today.year}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
     pdf.set_font("Helvetica", size=11)
-    # Core PDF fonts are Latin-1 only; swap typographic characters for plain ones.
-    clean = (text.replace("’", "'").replace("‘", "'").replace("“", '"')
-             .replace("”", '"').replace("—", "-").replace("–", "-"))
-    pdf.multi_cell(0, 6, clean.encode("latin-1", "replace").decode("latin-1"))
+    pdf.multi_cell(0, 6, _latin1(text))
     pdf.output(str(path))
     return str(path)

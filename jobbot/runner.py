@@ -21,8 +21,10 @@ log = logging.getLogger(__name__)
 def build_ai(cfg: Config):
     if not cfg.ai.enabled:
         return None
-    from .ai import ResumeAI, read_resume_text
-    return ResumeAI(cfg.ai, cfg.profile, read_resume_text(cfg.profile.resume_path))
+    from .ai import ResumeAI, read_document_text
+    example = read_document_text(cfg.ai.cover_letter_example) if cfg.ai.cover_letter_example else ""
+    return ResumeAI(cfg.ai, cfg.profile, read_document_text(cfg.profile.resume_path),
+                    example_letter=example)
 
 
 class Runner:
@@ -107,7 +109,7 @@ class Runner:
         except AIError as e:
             log.warning("    could not write cover letter: %s", e)
             return None, None
-        path = write_cover_letter_pdf(text, job, self.cfg.output_dir)
+        path = write_cover_letter_pdf(text, job, self.cfg.output_dir, self.cfg.profile)
         log.info("    cover letter: %s", path)
         return text, path
 

@@ -114,3 +114,24 @@ def test_concerns_flag_instead_of_auto_submit(cfg, tmp_path):
     runner.tracker.record(job, result)
     assert runner.tracker.is_done(job)                 # not re-scored next run
     assert not runner.tracker.is_done(job, recheck=True)
+
+
+def test_read_docx(tmp_path):
+    import zipfile
+    from jobbot.ai import read_document_text
+    doc = tmp_path / "letter.docx"
+    with zipfile.ZipFile(doc, "w") as z:
+        z.writestr("word/document.xml",
+                   '<w:document><w:body><w:p><w:r><w:t>Dear team&apos;s</w:t></w:r></w:p>'
+                   '<w:p><w:r><w:t xml:space="preserve">Second </w:t></w:r><w:r><w:t>para</w:t></w:r></w:p>'
+                   '</w:body></w:document>')
+    assert read_document_text(str(doc)) == "Dear team's\nSecond para"
+
+
+def test_cover_letter_uses_master_letter(cfg):
+    msgs = FakeMessages(text="Dear Hiring Manager, ...")
+    client = SimpleNamespace(beta=SimpleNamespace(messages=msgs))
+    ai = ResumeAI(AIConfig(enabled=True), cfg.profile, "resume", client=client,
+                  example_letter="My master letter text")
+    assert ai.cover_letter(JOB) == "Dear Hiring Manager, ..."
+    assert "My master letter text" in msgs.calls[0]["messages"][0]["content"]
