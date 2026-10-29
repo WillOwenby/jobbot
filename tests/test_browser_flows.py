@@ -228,13 +228,13 @@ def test_linkedin_search_uses_listing_feed(context, cfg, monkeypatch):
     pages = {0: feed}
     urls = []
 
-    def fake_get(url, **kw):
+    def fake_fetch(url):
         urls.append(url)
         start = int(url.rsplit("start=", 1)[1])
-        return FakeResponse(200, pages.get(start, ""))
+        return 200, pages.get(start, "")
 
     site = LinkedIn(context, cfg, None, Prompter("auto"))
-    monkeypatch.setattr(site.context.request, "get", fake_get)
+    monkeypatch.setattr(site, "_fetch_listing", fake_fetch)
     cfg.search.remote = True
     jobs = list(site.search("Healthcare IT Manager", "United States"))
     assert [j.job_id for j in jobs] == ["4474152709", "4462868107"]
@@ -245,7 +245,7 @@ def test_linkedin_search_uses_listing_feed(context, cfg, monkeypatch):
 
 def test_linkedin_search_falls_back_to_results_page(context, cfg, monkeypatch):
     site = LinkedIn(context, cfg, None, Prompter("auto"))
-    monkeypatch.setattr(site.context.request, "get", lambda url, **kw: FakeResponse(429, ""))
+    monkeypatch.setattr(site, "_fetch_listing", lambda url: (429, ""))
     context.route("https://www.linkedin.com/**",
                   lambda route: route.fulfill(body=LINK_LAYOUT, content_type="text/html"))
     cfg.search.max_pages = 1
@@ -354,9 +354,48 @@ def test_external_jobs_are_scored_not_skipped(context, cfg):
 def test_search_drops_easy_apply_filter_for_external(context, cfg, monkeypatch):
     urls = []
     site = LinkedIn(context, cfg, None, Prompter("auto"))
-    monkeypatch.setattr(site.context.request, "get",
-                        lambda url, **kw: urls.append(url) or FakeResponse(200, ""))
+    monkeypatch.setattr(site, "_fetch_listing", lambda url: urls.append(url) or (200, ""))
     list(site.search("RPA Manager", "United States"))
     cfg.search.include_external_jobs = True
     list(site.search("RPA Manager", "United States"))
     assert "f_AL=true" in urls[0] and "f_AL" not in urls[1]
+
+
+LOGGED_OUT_JOB = """
+<html><head><title>Senior Manager | Talkdesk | LinkedIn</title></head><body>
+<nav><a href="https://www.linkedin.com/signup">Join now</a>
+<a href="https://www.linkedin.com/login">Sign in</a></nav>
+<div class="show-more-less-html__markup">If you've built and scaled teams... </div>
+<button>Apply</button>
+</body></html>
+"""
+
+
+def test_logged_out_page_stops_the_run(context, cfg):
+    import pytest
+    from jobbot.sites.base import SiteLoggedOut
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=LOGGED_OUT_JOB, content_type="text/html"))
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    job = Job("linkedin", "1", "Senior Manager", "Talkdesk", "", "https://www.linkedin.com/jobs/view/1/")
+    with pytest.raises(SiteLoggedOut, match="login linkedin"):
+        site.open(job)
+
+
+def test_feed_is_fetched_without_browser_cookies(context, cfg, monkeypatch):
+    from jobbot.sites import linkedin as li
+    seen = {}
+
+    class FakeResp:
+        status = 200
+        def read(self): return b""
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout):
+        seen["headers"] = dict(req.header_items())
+        return FakeResp()
+
+    monkeypatch.setattr(li.urllib.request, "urlopen", fake_urlopen)
+    assert LinkedIn._fetch_listing("https://www.linkedin.com/jobs-guest/x") == (200, "")
+    assert "Cookie" not in seen["headers"] and "User-agent" in seen["headers"]

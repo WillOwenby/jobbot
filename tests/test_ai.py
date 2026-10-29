@@ -251,3 +251,13 @@ def test_duplicate_listing_is_not_scored_twice(cfg, tmp_path):
     # A listing whose earlier copy failed to score is still tried.
     runner.tracker.record(first, ApplyResult(Status.FAILED, "not scored: timeout"))
     assert runner.tracker.judged_duplicate(copy) is None
+
+
+def test_no_easy_apply_skips_are_retried(cfg, tmp_path):
+    from jobbot.models import ApplyResult, Status
+    t = Tracker(str(tmp_path / "t.db"))
+    job = Job(**{**JOB.__dict__, "concerns": []})
+    t.record(job, ApplyResult(Status.SKIPPED, "no Easy Apply button"))
+    assert not t.is_done(job)
+    other = Job(**{**JOB.__dict__, "job_id": "99", "concerns": []})
+    assert t.judged_duplicate(other) is None

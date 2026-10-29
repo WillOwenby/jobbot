@@ -8,6 +8,8 @@ from __future__ import annotations
 import html
 import logging
 import re
+import urllib.error
+import urllib.request
 from typing import Iterator
 from urllib.parse import urlencode
 
@@ -15,7 +17,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from ..models import ApplyResult, Job, Status
-from .base import MAX_FORM_STEPS, JobSite, text_of
+from .base import MAX_FORM_STEPS, JobSite, SiteLoggedOut, text_of
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +26,8 @@ SEARCH_URL = "https://www.linkedin.com/jobs/search/"
 # format has been stable for years, unlike the logged-in results page.
 LISTING_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 LISTING_PAGE_SIZE = 10
+FEED_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/141.0 Safari/537.36")
 PAGE_SIZE = 25
 
 # Job cards are found through their links, which LinkedIn can't change without
@@ -81,7 +85,8 @@ CARD_NOISE = re.compile(
     re.I,
 )
 
-DESCRIPTION = ("[componentkey^='JobDetails_AboutTheJob_'], #job-details, .jobs-description__content, .jobs-description-content__text, "
+DESCRIPTION = ("[componentkey^='JobDetails_AboutTheJob_'], #job-details, "
+               ".show-more-less-html__markup, .description__text, .jobs-description__content, .jobs-description-content__text, "
                ".jobs-box__html-content, [class*='jobs-description'], article")
 MIN_DESCRIPTION = 200  # characters; less than this is a placeholder, not a posting
 # Text of the longest element matching a selector (several can match while the page loads).
@@ -156,17 +161,16 @@ class LinkedIn(JobSite):
         seen: set[str] = set()
         for start in range(0, self.cfg.search.max_pages * PAGE_SIZE, LISTING_PAGE_SIZE):
             try:
-                resp = self.context.request.get(f"{LISTING_URL}?{urlencode({**params, 'start': start})}",
-                                                timeout=30000)
-            except PlaywrightError as e:
+                status, body = self._fetch_listing(f"{LISTING_URL}?{urlencode({**params, 'start': start})}")
+            except OSError as e:
                 if seen:
                     return
-                raise ListingUnavailable(str(e).split("\n")[0]) from None
-            if not resp.ok:
+                raise ListingUnavailable(str(e)) from None
+            if status != 200:
                 if seen or start:
                     return  # past the last page
-                raise ListingUnavailable(f"HTTP {resp.status}")
-            jobs = [j for j in parse_listing(resp.text()) if j.job_id not in seen]
+                raise ListingUnavailable(f"HTTP {status}")
+            jobs = [j for j in parse_listing(body) if j.job_id not in seen]
             if start == 0 or jobs:
                 log.info("    results %d-%d: %d new jobs", start + 1, start + LISTING_PAGE_SIZE, len(jobs))
             if not jobs:
@@ -174,6 +178,17 @@ class LinkedIn(JobSite):
             seen.update(j.job_id for j in jobs)
             yield from jobs
             self.page.wait_for_timeout(1000)
+
+    @staticmethod
+    def _fetch_listing(url: str) -> tuple[int, str]:
+        """Fetch the public feed WITHOUT the browser's cookies, so hundreds of search requests
+        aren't tied to the logged-in account (LinkedIn may end a session that does that)."""
+        req = urllib.request.Request(url, headers={"User-Agent": FEED_USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.status, resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            return e.code, ""
 
     def _search_page(self, params: dict) -> Iterator[Job]:
         seen: set[str] = set()
@@ -214,6 +229,10 @@ class LinkedIn(JobSite):
 
     def open(self, job: Job) -> ApplyResult | None:
         self.goto(job.url)
+        if self._looks_logged_out():
+            self.save_debug("logged-out")
+            raise SiteLoggedOut("LinkedIn is showing the logged-out page. Run "
+                                "'python -m jobbot login linkedin', log in again, then rerun")
         try:
             # The description box renders before its text arrives; wait for real content.
             self.page.wait_for_function(DESCRIPTION_READY_JS,
@@ -253,6 +272,11 @@ class LinkedIn(JobSite):
             self.save_debug("job-no-easy-apply")
             return ApplyResult(Status.SKIPPED, "no Easy Apply button")
         return None
+
+    def _looks_logged_out(self) -> bool:
+        # The public (logged-out) job page has "Join now" and "Sign in" in its header.
+        return bool(self.page.get_by_role("link", name="Join now", exact=True).count()
+                    and self.page.get_by_role("link", name="Sign in", exact=True).count())
 
     def apply(self, job: Job) -> ApplyResult:
         try:

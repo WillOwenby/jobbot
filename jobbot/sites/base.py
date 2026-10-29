@@ -19,6 +19,10 @@ log = logging.getLogger(__name__)
 MAX_FORM_STEPS = 15
 
 
+class SiteLoggedOut(RuntimeError):
+    """The site logged us out mid-run; every following job would be misjudged."""
+
+
 class JobSite(ABC):
     name: str
     login_url: str

@@ -23,6 +23,8 @@ DONE = (Status.APPLIED.value, Status.ALREADY_APPLIED.value)
 # Jobs already judged; not re-scored on later runs unless --recheck is passed.
 JUDGED = DONE + (Status.SKIPPED.value, Status.FLAGGED.value, Status.APPLY_YOURSELF.value)
 UNSCORED_PREFIXES = ("not scored", "couldn't read the job description")
+# Skips that depended on the page (e.g. logged out), so they're looked at again next run.
+RETRY_SKIPS = ("no Easy Apply button",)
 
 
 class Tracker:
@@ -37,6 +39,8 @@ class Tracker:
         status, detail = row
         if status == Status.FLAGGED.value and detail and detail.startswith(UNSCORED_PREFIXES):
             return False  # flagged only because scoring failed (older versions); score it now
+        if status == Status.SKIPPED.value and detail in RETRY_SKIPS:
+            return False
         return status in (DONE if recheck else JUDGED)
 
     def judged_duplicate(self, job: Job) -> sqlite3.Row | None:
@@ -54,7 +58,8 @@ class Tracker:
             self.conn.row_factory = None
         for row in rows:
             unscored = row["status"] == Status.FLAGGED.value and (row["detail"] or "").startswith(UNSCORED_PREFIXES)
-            if row["status"] in JUDGED and not unscored:
+            retry = row["status"] == Status.SKIPPED.value and row["detail"] in RETRY_SKIPS
+            if row["status"] in JUDGED and not unscored and not retry:
                 return row
         return None
 
