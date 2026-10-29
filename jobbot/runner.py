@@ -28,9 +28,11 @@ def build_ai(cfg: Config):
 
 
 class Runner:
-    def __init__(self, cfg: Config, mode: str, max_applications: int | None = None, recheck: bool = False):
+    def __init__(self, cfg: Config, mode: str, max_applications: int | None = None, recheck: bool = False,
+                 debug: bool = False):
         self.cfg = cfg
         self.recheck = recheck
+        self.debug = debug
         self.mode = mode
         self.limit = max_applications or cfg.limits.max_applications_per_site
         self.tracker = Tracker(cfg.database)
@@ -45,6 +47,7 @@ class Runner:
         with open_browser(self.cfg.browser) as context:
             for name in sites:
                 site = SITES[name](context, self.cfg, self.filler, self.prompter)
+                site.debug = self.debug
                 site.ensure_logged_in()
                 self._run_site(site)
         return self.stats

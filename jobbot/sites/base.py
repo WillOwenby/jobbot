@@ -30,6 +30,7 @@ class JobSite(ABC):
         self.prompter = prompter
         self.page = context.pages[0] if context.pages else context.new_page()
         self._debug_saved: set[str] = set()
+        self.debug = False  # when True, also snapshot pages that worked
 
     def save_debug(self, label: str) -> None:
         """Save a screenshot and the HTML of the current page (once per label per run)."""

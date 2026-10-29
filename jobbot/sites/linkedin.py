@@ -133,6 +133,8 @@ class LinkedIn(JobSite):
             # Collect the whole page before yielding: applying navigates away.
             jobs = [j for j in self._collect_jobs() if j.job_id not in seen]
             log.info("    results page %d: %d new jobs", page_num + 1, len(jobs))
+            if self.debug:
+                self.save_debug("search-results")
             if not jobs:
                 return
             seen.update(j.job_id for j in jobs)
@@ -164,6 +166,8 @@ class LinkedIn(JobSite):
             self.save_debug("job-no-description")
             main = self.page.locator("main")
             job.description = (main.first if main.count() else self.page.locator("body")).inner_text()
+        if self.debug:
+            self.save_debug("job-page")
         if not job.company:
             job.company = text_of(self.page, TOP_CARD_COMPANY)
         if self.page.locator(ALREADY_APPLIED).count():

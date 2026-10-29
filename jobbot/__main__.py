@@ -31,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--max", type=int, help="max applications per site this run")
     p_run.add_argument("--recheck", action="store_true",
                        help="re-evaluate jobs skipped or flagged on earlier runs")
+    p_run.add_argument("--debug", action="store_true",
+                       help="save screenshots + HTML of the first results page and job page to output/debug")
 
     p_report = sub.add_parser("report", help="show application history")
     p_report.add_argument("--csv", help="also export to this CSV file")
@@ -64,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         from .runner import Runner
         mode = args.mode or cfg.mode
-        runner = Runner(cfg, mode, args.max, args.recheck)
+        runner = Runner(cfg, mode, args.max, args.recheck, args.debug)
         try:
             stats = runner.run(args.site or cfg.sites)
         except KeyboardInterrupt:
