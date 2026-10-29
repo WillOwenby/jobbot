@@ -1,0 +1,76 @@
+# Copy to config.yaml and fill in. Paths are relative to this file.
+
+sites: [linkedin, indeed]
+
+# review  - fills everything, then asks you in the terminal before each submit (start here)
+# auto    - submits without asking; skips any job with a question it can't answer
+# dry-run - searches, filters and scores jobs, but never opens an application
+mode: review
+
+search:
+  keywords: ["python developer", "backend engineer"]
+  locations: ["Austin, TX", "United States"]
+  remote: true
+  posted_within_days: 7
+  max_pages: 3
+
+filters:                      # whole-word, case-insensitive
+  title_include: []           # if set, the title must contain at least one
+  title_exclude: [senior, staff, principal, lead, manager, intern]
+  company_exclude: []
+  description_exclude: ["security clearance", "TS/SCI"]
+
+profile:
+  first_name: Jane
+  last_name: Doe
+  email: jane@example.com
+  phone: "5125550100"
+  city: Austin, Texas, United States
+  resume_path: resume.pdf     # PDF works best (the AI reads it)
+  cover_letter_path: ""       # optional fixed cover letter; AI writes one per job if enabled
+  linkedin_url: https://www.linkedin.com/in/janedoe
+  website: https://github.com/janedoe
+
+# Your own answers to screening questions. `match` is a regex tested against the
+# question text, top to bottom; first match wins. These always beat the AI.
+# Quote yes/no so YAML keeps them as text.
+answers:
+  - { match: "authori[sz]ed to work|legally (eligible|able) to work", answer: "Yes" }
+  - { match: "sponsorship|visa", answer: "No" }
+  - { match: "years.*python", answer: "4" }
+  - { match: "years of (work )?experience", answer: "4" }
+  - { match: "salary|compensation|pay expectation", answer: "120000" }
+  - { match: "relocat", answer: "No" }
+  - { match: "commut|on-?site|hybrid", answer: "Yes" }
+  - { match: "notice period|start date|available to start", answer: "2 weeks" }
+  - { match: "country code", answer: "United States (+1)" }
+  - { match: "gender|race|ethnicity|veteran|disability", answer: "I don't wish to answer" }
+
+# AI features (Claude). Needs ANTHROPIC_API_KEY in your environment.
+ai:
+  enabled: true
+  model: claude-opus-5-5
+  effort: medium               # low is cheaper/faster; high is more careful
+  min_fit_score: 60            # skip jobs Claude scores below this (0-100)
+  answer_questions: true
+  cover_letters: true          # writes a tailored PDF per job into output/
+  about_me: |
+    Anything the AI should know that isn't on your resume:
+    - US citizen, no sponsorship needed
+    - Prefer remote; open to hybrid in Austin
+    - Not interested in crypto or gambling companies
+
+limits:
+  max_applications_per_site: 15
+  min_delay_seconds: 5
+  max_delay_seconds: 15
+
+browser:
+  profile_dir: browser-profile # holds your logins; keep it private
+  channel: null                # "chrome" to use your installed Google Chrome
+  slow_mo_ms: 50
+
+follow_companies: false        # untick LinkedIn's "follow company" box
+indeed_domain: www.indeed.com  # e.g. uk.indeed.com, ca.indeed.com
+database: jobbot.db
+output_dir: output

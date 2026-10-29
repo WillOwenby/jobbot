@@ -1,0 +1,129 @@
+"""Drive the real form-filling and LinkedIn Easy Apply code against fake pages."""
+from jobbot.forms import AnswerBook, Answerer, FormFiller
+from jobbot.models import Job, Status
+from jobbot.prompter import Prompter
+from jobbot.sites.linkedin import LinkedIn
+
+FORM = """
+<form id="f">
+  <label for="fn">First name</label><input id="fn" required>
+  <label for="em">Email address</label><input id="em" type="email">
+  <label for="yrs">How many years of Python experience do you have?</label>
+  <input id="yrs" type="number" aria-required="true">
+  <label for="deg">Highest degree *</label>
+  <select id="deg"><option>Select an option</option><option>Bachelor's Degree</option></select>
+  <fieldset><legend>Will you require sponsorship?</legend>
+    <input type="radio" name="sp" id="sp1" value="y"><label for="sp1">Yes</label>
+    <input type="radio" name="sp" id="sp2" value="n"><label for="sp2">No</label>
+  </fieldset>
+  <label for="color">Favorite color *</label><input id="color">
+  <label for="opt">Anything else?</label><textarea id="opt"></textarea>
+</form>
+"""
+
+
+class FixedAI:
+    """Stands in for ResumeAI: knows only the degree question."""
+
+    def answer_question(self, question, options, job):
+        from jobbot.ai import ScreeningAnswer
+        if "degree" in question.lower():
+            return ScreeningAnswer(answer="Bachelor's Degree", confident=True)
+        return ScreeningAnswer(answer="?", confident=False)
+
+
+def make_filler(cfg, ai=None):
+    return FormFiller(Answerer(AnswerBook(cfg.profile, cfg.answers), ai), cfg.profile)
+
+
+def test_form_filler(page, cfg):
+    page.set_content(FORM)
+    unanswered = make_filler(cfg, FixedAI()).fill(page.locator("#f"))
+
+    assert page.input_value("#fn") == "Jane"
+    assert page.input_value("#em") == "jane@example.com"
+    assert page.input_value("#yrs") == "4"
+    assert page.eval_on_selector("#deg", "s => s.value") == "Bachelor's Degree"
+    assert page.is_checked("#sp2")
+    assert page.input_value("#opt") == ""                  # optional, unknown: left alone
+    assert unanswered == ["Favorite color"]                # required, unknown: reported
+
+
+LINKEDIN_JOB = """
+<html><body>
+<div id="job-details">We want Python and Django.</div>
+<button class="jobs-apply-button" onclick="openModal()">Easy Apply</button>
+<div id="root"></div>
+<script>
+const steps = [
+  `<label for="ph">Mobile phone number</label><input id="ph" required>
+   <button aria-label="Continue to next step" onclick="next(['ph'])">Next</button>`,
+  `<label for="yrs">Years of Python?</label><input id="yrs" required>
+   <fieldset><legend>Require sponsorship?</legend>
+     <input type="radio" name="s" id="s1"><label for="s1">Yes</label>
+     <input type="radio" name="s" id="s2"><label for="s2">No</label></fieldset>
+   EXTRA
+   <button aria-label="Review your application" onclick="next(['yrs'])">Review</button>`,
+  `<input type="checkbox" id="follow-company-checkbox" checked>
+   <label for="follow-company-checkbox">Follow</label>
+   <button aria-label="Submit application" onclick="submitApp()">Submit</button>`,
+];
+let step = 0;
+window.extra = '';
+function render() {
+  document.getElementById('root').innerHTML =
+    `<div class="jobs-easy-apply-modal" role="dialog">
+       <button aria-label="Dismiss" onclick="closeModal()">x</button>
+       <div id="body">${steps[step].replace('EXTRA', window.extra)}</div></div>`;
+}
+function openModal() { step = 0; render(); }
+function closeModal() { document.getElementById('root').innerHTML = ''; window.discarded = true; }
+function next(ids) {
+  const missing = ids.concat(step === 1 && window.extra ? ['color'] : []).filter(i => !document.getElementById(i).value);
+  if (missing.length) {
+    document.getElementById('body').insertAdjacentHTML('beforeend',
+      '<div class="artdeco-inline-feedback--error">Please enter a valid answer</div>');
+    return;
+  }
+  step++; render();
+}
+function submitApp() {
+  window.submitted = { follow: document.getElementById('follow-company-checkbox').checked };
+  document.getElementById('root').innerHTML =
+    '<div role="dialog"><p>Application sent</p><button aria-label="Dismiss">x</button></div>';
+}
+</script></body></html>
+"""
+
+
+def linkedin(context, cfg, extra_html=""):
+    html = LINKEDIN_JOB.replace("window.extra = '';", f"window.extra = `{extra_html}`;")
+    context.route("https://www.linkedin.com/**", lambda route: route.fulfill(body=html, content_type="text/html"))
+    return LinkedIn(context, cfg, make_filler(cfg), Prompter("auto"))
+
+
+JOB = Job("linkedin", "123", "Python Developer", "Acme", "Remote", "https://www.linkedin.com/jobs/view/123/")
+
+
+def test_linkedin_easy_apply_end_to_end(context, cfg):
+    site = linkedin(context, cfg)
+    assert site.open(JOB) is None
+    assert "Django" in JOB.description
+
+    result = site.apply(JOB)
+
+    assert result.status == Status.APPLIED, result
+    assert site.page.evaluate("window.submitted") == {"follow": False}
+
+
+def test_linkedin_unknown_required_question_discards_in_auto_mode(context, cfg):
+    extra = '<label for="color">Favorite color *</label><input id="color" required>'
+    site = linkedin(context, cfg, extra)
+    site.open(JOB)
+
+    result = site.apply(JOB)
+
+    assert result.status == Status.NEEDS_INPUT
+    assert result.questions == ["Favorite color"]
+    assert site.page.evaluate("window.discarded") is True
+    assert not site.page.evaluate("window.submitted")

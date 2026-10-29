@@ -1,0 +1,7 @@
+config.yaml
+browser-profile/
+jobbot.db
+output/
+*.pdf
+__pycache__/
+.pytest_cache/

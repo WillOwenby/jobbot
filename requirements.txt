@@ -1,0 +1,7 @@
+playwright>=1.45
+pyyaml>=6.0
+anthropic>=2.3
+pydantic>=2.0
+pypdf>=4.0
+fpdf2>=2.7
+pytest>=8.0
