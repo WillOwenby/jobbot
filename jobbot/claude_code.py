@@ -3,6 +3,7 @@ Pro/Max plan's usage limits instead of API credit."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -51,7 +52,7 @@ class ClaudeCodeClient:
             cmd += ["--json-schema", json.dumps(schema)]
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
-                                  timeout=TIMEOUT_SECONDS, cwd=self._workdir)
+                                  timeout=TIMEOUT_SECONDS, cwd=self._workdir, env=_plan_env())
         except subprocess.TimeoutExpired:
             raise ClaudeCodeError(f"Claude Code took longer than {TIMEOUT_SECONDS}s") from None
         except OSError as e:
@@ -78,3 +79,12 @@ class ClaudeCodeClient:
 def _looks_fatal(detail: str) -> bool:
     d = detail.lower()
     return any(m in d for m in FATAL_MARKERS)
+
+
+def _plan_env() -> dict:
+    """Environment for `claude` without API credentials, so it uses the logged-in Claude plan
+    rather than a leftover ANTHROPIC_API_KEY (which would bill API credit instead)."""
+    env = dict(os.environ)
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        env.pop(name, None)
+    return env

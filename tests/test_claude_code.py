@@ -89,3 +89,12 @@ def test_missing_claude_command(cfg, monkeypatch):
     monkeypatch.setattr(claude_code.shutil, "which", lambda name: None)
     with pytest.raises(AIFatalError, match="Install Claude Code"):
         ResumeAI(AIConfig(enabled=True, provider="claude-code"), cfg.profile, "resume")
+
+
+def test_api_key_is_hidden_from_claude(cfg, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-old")
+    calls = []
+    ai = make_ai(cfg, monkeypatch, result(result="Dear Hiring Manager"), calls=calls)
+    ai.cover_letter(JOB)
+    env = calls[0][1]["env"]
+    assert "ANTHROPIC_API_KEY" not in env and "PATH" in env
