@@ -5,6 +5,7 @@ below are the first place to look: open DevTools on the page and update them.
 """
 from __future__ import annotations
 
+import html
 import logging
 import re
 from typing import Iterator
@@ -19,6 +20,10 @@ from .base import MAX_FORM_STEPS, JobSite, text_of
 log = logging.getLogger(__name__)
 
 SEARCH_URL = "https://www.linkedin.com/jobs/search/"
+# The plain job-listing feed LinkedIn serves to logged-out visitors. Its card
+# format has been stable for years, unlike the logged-in results page.
+LISTING_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+LISTING_PAGE_SIZE = 10
 PAGE_SIZE = 25
 
 # Job cards are found through their links, which LinkedIn can't change without
@@ -76,8 +81,9 @@ CARD_NOISE = re.compile(
     re.I,
 )
 
-DESCRIPTION = ("#job-details, .jobs-description__content, .jobs-description-content__text, "
+DESCRIPTION = ("[componentkey^='JobDetails_AboutTheJob_'], #job-details, .jobs-description__content, .jobs-description-content__text, "
                ".jobs-box__html-content, [class*='jobs-description'], article")
+EXPAND_DESCRIPTION = "[data-testid='expandable-text-button'], button[aria-label*='see more' i]"
 TOP_CARD_COMPANY = ".job-details-jobs-unified-top-card__company-name, a[href*='/company/']"
 EASY_APPLY_BUTTON = ("button.jobs-apply-button:has-text('Easy Apply'), button[aria-label*='Easy Apply'], "
                      "a[aria-label*='Easy Apply'], button:has-text('Easy Apply'), a:has-text('Easy Apply')")
@@ -120,8 +126,38 @@ class LinkedIn(JobSite):
         }
         if s.remote:
             params["f_WT"] = "2"
+        try:
+            yield from self._search_listing(params)
+        except ListingUnavailable as e:
+            log.info("    listing feed unavailable (%s); reading the results page instead", e)
+            yield from self._search_page(params)
+
+    def _search_listing(self, params: dict) -> Iterator[Job]:
         seen: set[str] = set()
-        for page_num in range(s.max_pages):
+        for start in range(0, self.cfg.search.max_pages * PAGE_SIZE, LISTING_PAGE_SIZE):
+            try:
+                resp = self.context.request.get(f"{LISTING_URL}?{urlencode({**params, 'start': start})}",
+                                                timeout=30000)
+            except PlaywrightError as e:
+                if seen:
+                    return
+                raise ListingUnavailable(str(e).split("\n")[0]) from None
+            if not resp.ok:
+                if seen or start:
+                    return  # past the last page
+                raise ListingUnavailable(f"HTTP {resp.status}")
+            jobs = [j for j in parse_listing(resp.text()) if j.job_id not in seen]
+            if start == 0 or jobs:
+                log.info("    results %d-%d: %d new jobs", start + 1, start + LISTING_PAGE_SIZE, len(jobs))
+            if not jobs:
+                return
+            seen.update(j.job_id for j in jobs)
+            yield from jobs
+            self.page.wait_for_timeout(1000)
+
+    def _search_page(self, params: dict) -> Iterator[Job]:
+        seen: set[str] = set()
+        for page_num in range(self.cfg.search.max_pages):
             params["start"] = page_num * PAGE_SIZE
             self.goto(f"{SEARCH_URL}?{urlencode(params)}")
             try:
@@ -159,8 +195,16 @@ class LinkedIn(JobSite):
     def open(self, job: Job) -> ApplyResult | None:
         self.goto(job.url)
         try:
-            self.page.locator(DESCRIPTION).first.wait_for(timeout=15000)
-            job.description = self.page.locator(DESCRIPTION).first.inner_text()
+            box = self.page.locator(DESCRIPTION).first
+            box.wait_for(timeout=15000)
+            expand = box.locator(EXPAND_DESCRIPTION).first
+            if expand.count():
+                try:
+                    expand.click(timeout=3000)  # the description is truncated behind "more"
+                    self.page.wait_for_timeout(500)
+                except PlaywrightError:
+                    pass
+            job.description = box.inner_text()
         except PlaywrightTimeout:
             log.info("    couldn't find the job description; using the whole page text")
             self.save_debug("job-no-description")
@@ -168,6 +212,11 @@ class LinkedIn(JobSite):
             job.description = (main.first if main.count() else self.page.locator("body")).inner_text()
         if self.debug:
             self.save_debug("job-page")
+        # The page title is "Job title | Company | LinkedIn" on every layout so far.
+        parts = [x.strip() for x in self.page.title().split("|")]
+        if len(parts) >= 3 and parts[-1] == "LinkedIn":
+            job.title = job.title or parts[0]
+            job.company = job.company or parts[1]
         if not job.company:
             job.company = text_of(self.page, TOP_CARD_COMPANY)
         if self.page.locator(ALREADY_APPLIED).count():
@@ -256,3 +305,36 @@ def parse_card_lines(title: str, lines: list[str]) -> tuple[str, str]:
     company = rest[0] if rest else ""
     location = rest[1] if len(rest) > 1 else ""
     return company, location
+
+
+class ListingUnavailable(Exception):
+    pass
+
+
+LISTING_CARD_SPLIT = re.compile(r'(?=<li[\s>])')
+
+
+def _strip_tags(fragment: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
+
+
+def parse_listing(text: str) -> list[Job]:
+    """Parse the job-listing feed's HTML cards into Jobs."""
+    jobs = []
+    for card in LISTING_CARD_SPLIT.split(text):
+        m = (re.search(r"urn:li:jobPosting:(\d+)", card)
+             or re.search(r"/jobs/view/(?:[^\"/?]*?-)?(\d{6,})", card))
+        if not m:
+            continue
+        def field(cls: str) -> str:
+            f = re.search(rf'class="[^"]*\b{cls}\b[^"]*"[^>]*>(.*?)</(?:h3|h4|span|a|div)>', card, re.S)
+            return _strip_tags(f.group(1)) if f else ""
+        title = field("base-search-card__title")
+        if title:
+            jobs.append(Job(
+                site="linkedin", job_id=m.group(1), title=title,
+                company=field("base-search-card__subtitle") or field("hidden-nested-link"),
+                location=field("job-search-card__location"),
+                url=f"https://www.linkedin.com/jobs/view/{m.group(1)}/",
+            ))
+    return jobs

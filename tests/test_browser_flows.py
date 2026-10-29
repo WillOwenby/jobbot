@@ -173,10 +173,12 @@ ATTRIBUTE_LAYOUT = """
 
 
 def search_jobs(context, cfg, html):
+    """Search via the logged-in results page (the fallback when the listing feed is unavailable)."""
     context.route("https://www.linkedin.com/**", lambda route: route.fulfill(body=html, content_type="text/html"))
     cfg.search.max_pages = 1
     site = LinkedIn(context, cfg, None, Prompter("auto"))
-    return list(site.search("healthcare it manager", "United States"))
+    params = {"keywords": "healthcare it manager", "location": "United States"}
+    return list(site._search_page(params))
 
 
 def test_linkedin_search_finds_jobs_by_link(context, cfg):
@@ -198,3 +200,77 @@ def test_linkedin_search_saves_debug_snapshot_when_empty(context, cfg, tmp_path)
     assert search_jobs(context, cfg, "<p>No matching jobs found.</p>") == []
     snapshots = sorted(p.suffix for p in (tmp_path / "debug").iterdir())
     assert snapshots == [".html", ".png"]
+
+
+def test_parse_listing_feed():
+    from pathlib import Path
+    from jobbot.sites.linkedin import parse_listing
+    text = (Path(__file__).parent / "fixtures" / "linkedin_listing.html").read_text(encoding="utf-8")
+    jobs = parse_listing(text)
+    assert [(j.job_id, j.title, j.company, j.location) for j in jobs] == [
+        ("4474152709", "Information Technology Manager", "Clinical Management Consultants", "Louisiana, United States"),
+        ("4462868107", "Information Systems Manager", "Mount Sinai Medical Center", "Miami, FL"),
+    ]
+    assert jobs[0].url == "https://www.linkedin.com/jobs/view/4474152709/"
+
+
+class FakeResponse:
+    def __init__(self, status, body):
+        self.status, self.ok, self._body = status, status == 200, body
+
+    def text(self):
+        return self._body
+
+
+def test_linkedin_search_uses_listing_feed(context, cfg, monkeypatch):
+    from pathlib import Path
+    feed = (Path(__file__).parent / "fixtures" / "linkedin_listing.html").read_text(encoding="utf-8")
+    pages = {0: feed}
+    urls = []
+
+    def fake_get(url, **kw):
+        urls.append(url)
+        start = int(url.rsplit("start=", 1)[1])
+        return FakeResponse(200, pages.get(start, ""))
+
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    monkeypatch.setattr(site.context.request, "get", fake_get)
+    cfg.search.remote = True
+    jobs = list(site.search("Healthcare IT Manager", "United States"))
+    assert [j.job_id for j in jobs] == ["4474152709", "4462868107"]
+    assert "f_AL=true" in urls[0] and "f_WT=2" in urls[0] and "start=0" in urls[0]
+    assert len(urls) == 2  # stops at the first empty page
+
+
+def test_linkedin_search_falls_back_to_results_page(context, cfg, monkeypatch):
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    monkeypatch.setattr(site.context.request, "get", lambda url, **kw: FakeResponse(429, ""))
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=LINK_LAYOUT, content_type="text/html"))
+    cfg.search.max_pages = 1
+    jobs = list(site.search("x", "United States"))
+    assert [j.job_id for j in jobs] == ["4012345678", "4087654321"]
+
+
+NEW_LAYOUT_JOB = """
+<html><head><title>Clinical Customer Success &amp; Adoption Manager | Brainreader | LinkedIn</title></head>
+<body>
+<button aria-label="Easy Apply to this job">Easy Apply</button>
+<div componentkey="JobDetails_AboutTheJob_4482216525">
+  <h2>About the job</h2>
+  <span data-testid="expandable-text-box" id="box">Short start of the posting...</span>
+  <button data-testid="expandable-text-button"
+          onclick="document.getElementById('box').innerText = 'Full posting: Remote, $115k-$130k base.'">more</button>
+</div>
+</body></html>
+"""
+
+
+def test_linkedin_job_page_new_layout(context, cfg):
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=NEW_LAYOUT_JOB, content_type="text/html"))
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
+    assert site.open(job) is None                      # Easy Apply found
+    assert "Full posting: Remote, $115k-$130k base." in job.description
+    assert (job.title, job.company) == ("Clinical Customer Success & Adoption Manager", "Brainreader")
