@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS ai_answers (
 DONE = (Status.APPLIED.value, Status.ALREADY_APPLIED.value)
 # Jobs already judged; not re-scored on later runs unless --recheck is passed.
 JUDGED = DONE + (Status.SKIPPED.value, Status.FLAGGED.value)
+UNSCORED_PREFIXES = ("not scored", "couldn't read the job description")
 
 
 class Tracker:
@@ -30,8 +31,13 @@ class Tracker:
         self.conn.executescript(SCHEMA)
 
     def is_done(self, job: Job, recheck: bool = False) -> bool:
-        row = self.conn.execute("SELECT status FROM applications WHERE key = ?", (job.key,)).fetchone()
-        return bool(row and row[0] in (DONE if recheck else JUDGED))
+        row = self.conn.execute("SELECT status, detail FROM applications WHERE key = ?", (job.key,)).fetchone()
+        if not row:
+            return False
+        status, detail = row
+        if status == Status.FLAGGED.value and detail and detail.startswith(UNSCORED_PREFIXES):
+            return False  # flagged only because scoring failed (older versions); score it now
+        return status in (DONE if recheck else JUDGED)
 
     def record(self, job: Job, result: ApplyResult) -> None:
         self.conn.execute(

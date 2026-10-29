@@ -41,6 +41,10 @@ class AIError(RuntimeError):
     pass
 
 
+class AIFatalError(AIError):
+    """The API can't be used at all (bad key, no credit); stop instead of retrying every job."""
+
+
 class FitScore(BaseModel):
     score: int
     reason: str
@@ -90,13 +94,13 @@ class ResumeAI:
         # The resume is the same on every call, so cache it.
         self.system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
-    def _request(self, prompt: str, output_format=None):
+    def _request(self, prompt: str, output_format=None, model: str = "", effort: str = ""):
         kwargs = dict(
-            model=self.cfg.model,
+            model=model or self.cfg.model,
             max_tokens=16000,
             system=self.system,
             messages=[{"role": "user", "content": prompt}],
-            output_config={"effort": self.cfg.effort},
+            output_config={"effort": effort or self.cfg.effort},
             # If a request is declined by a safety classifier, retry it on a fallback model.
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
@@ -107,10 +111,15 @@ class ResumeAI:
             else:
                 resp = self.client.beta.messages.create(**kwargs)
         except anthropic.AuthenticationError as e:
-            raise AIError("Anthropic authentication failed; set ANTHROPIC_API_KEY") from e
+            raise AIFatalError("Anthropic authentication failed; check ANTHROPIC_API_KEY") from e
+        except anthropic.PermissionDeniedError as e:
+            raise AIFatalError(f"Anthropic API key not permitted: {e.message}") from e
         except anthropic.RateLimitError as e:
             raise AIError("Anthropic rate limit hit") from e
         except anthropic.APIStatusError as e:
+            if "credit balance" in str(e.message).lower():
+                raise AIFatalError("Anthropic credit balance is too low; add credits at "
+                                   "console.anthropic.com > Billing, then run again") from e
             raise AIError(f"Anthropic API error {e.status_code}: {e.message}") from e
         except anthropic.APIConnectionError as e:
             raise AIError("could not reach the Anthropic API") from e
@@ -151,7 +160,8 @@ Location: {job.location}
 
 {job.description[:20000]}
 </job>"""
-        result = self._request(prompt, FitScore).parsed_output
+        result = self._request(prompt, FitScore, model=self.cfg.scoring_model,
+                               effort=self.cfg.scoring_effort).parsed_output
         result.score = max(0, min(100, result.score))
         return result
 

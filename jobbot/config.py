@@ -52,6 +52,8 @@ class AIConfig:
     enabled: bool = False
     model: str = "claude-opus-5-5"
     effort: str = "medium"
+    scoring_model: str = ""   # model for job-fit scoring; empty = same as `model`
+    scoring_effort: str = ""  # effort for job-fit scoring; empty = same as `effort`
     min_fit_score: int = 60
     answer_questions: bool = True
     cover_letters: bool = True

@@ -54,7 +54,8 @@ class JobSite(ABC):
                 self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 return
             except PlaywrightError as e:
-                if "interrupted by another navigation" not in str(e) or attempt == attempts - 1:
+                retryable = "interrupted by another navigation" in str(e) or "ERR_ABORTED" in str(e)
+                if not retryable or attempt == attempts - 1:
                     raise
                 self.page.wait_for_load_state("domcontentloaded")
 

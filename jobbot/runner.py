@@ -5,6 +5,8 @@ import random
 import time
 from collections import Counter
 
+from playwright.sync_api import Error as PlaywrightError
+
 from .browser import open_browser
 from .config import Config
 from .filters import reject_reason
@@ -65,7 +67,11 @@ class Runner:
                         return
                     if self.tracker.is_done(job, self.recheck):
                         continue
-                    result = self._process(site, job)
+                    try:
+                        result = self._process(site, job)
+                    except PlaywrightError as e:
+                        # One broken page shouldn't end the run.
+                        result = ApplyResult(Status.FAILED, f"browser error: {str(e).splitlines()[0]}")
                     self._log(job, result)
                     if result.status in (Status.APPLIED, Status.DRY_RUN):
                         applied += 1
@@ -82,10 +88,10 @@ class Runner:
             return ApplyResult(Status.SKIPPED, reason)
 
         if self.ai:
-            from .ai import AIError
+            from .ai import AIError, AIFatalError
             if len(job.description.strip()) < MIN_DESCRIPTION:
-                # Never pass a job through unscored; a person should look at it.
-                return ApplyResult(Status.FLAGGED, "couldn't read the job description, so it wasn't scored")
+                # Never pass a job through unscored. FAILED (not FLAGGED) so the next run retries it.
+                return ApplyResult(Status.FAILED, "couldn't read the job description, so it wasn't scored")
             try:
                 fit = self.ai.score_fit(job)
                 job.fit_score, job.fit_reason, job.concerns = fit.score, fit.reason, fit.concerns
@@ -96,9 +102,11 @@ class Runner:
                     return ApplyResult(Status.SKIPPED, f"excluded: {fit.hard_exclusion}")
                 if fit.score < self.cfg.ai.min_fit_score:
                     return ApplyResult(Status.SKIPPED, f"fit score {fit.score} < {self.cfg.ai.min_fit_score}")
+            except AIFatalError:
+                raise
             except AIError as e:
                 log.warning("    could not score fit: %s", e)
-                return ApplyResult(Status.FLAGGED, f"not scored: {e}")
+                return ApplyResult(Status.FAILED, f"not scored: {e}")
 
         if self.mode == "dry-run":
             return ApplyResult(Status.DRY_RUN, "would apply" + (" (has concerns)" if job.concerns else ""))

@@ -51,6 +51,8 @@ ai:
   enabled: true
   model: claude-opus-5-5
   effort: medium               # low is cheaper/faster; high is more careful
+  scoring_model: ""            # cheaper model for job-fit scoring only (e.g. claude-haiku-5-5); "" = model
+  scoring_effort: ""           # effort for job-fit scoring only (e.g. low); "" = effort
   min_fit_score: 60            # skip jobs Claude scores below this (0-100)
   answer_questions: true
   cover_letters: true          # writes a tailored PDF per job into output/

@@ -90,17 +90,17 @@ def test_fit_prompt_includes_criteria(cfg):
 LONG_DESCRIPTION = "Lead a remote team building Epic and RPA automation. " * 10
 
 
-def test_unreadable_description_is_flagged_not_passed_through(cfg, tmp_path):
+def test_unreadable_description_is_not_passed_through(cfg, tmp_path):
     fit = FitScore(score=99, reason="", hard_exclusion="", concerns=[])
     for mode in ("dry-run", "review", "auto"):
         runner, site = _runner(cfg, tmp_path, mode, fit)
         job = Job(**{**JOB.__dict__, "concerns": [], "description": "About the job"})
         result = runner._process(site, job)
-        assert result.status.value == "flagged", mode
+        assert result.status.value == "failed", mode  # failed, so the next run retries it
         assert "wasn't scored" in result.detail
 
 
-def test_ai_error_is_flagged(cfg, tmp_path):
+def test_ai_error_is_retried_next_run(cfg, tmp_path):
     runner, site = _runner(cfg, tmp_path, "review", None)
 
     def boom(job):
@@ -109,7 +109,33 @@ def test_ai_error_is_flagged(cfg, tmp_path):
     runner.ai = SimpleNamespace(score_fit=boom)
     job = Job(**{**JOB.__dict__, "concerns": [], "description": LONG_DESCRIPTION})
     result = runner._process(site, job)
-    assert (result.status.value, result.detail) == ("flagged", "not scored: rate limited")
+    assert (result.status.value, result.detail) == ("failed", "not scored: rate limited")
+    runner.tracker.record(job, result)
+    assert not runner.tracker.is_done(job)
+
+
+def test_fatal_ai_error_stops_the_run(cfg, tmp_path):
+    import pytest
+    from jobbot.ai import AIFatalError
+    runner, site = _runner(cfg, tmp_path, "dry-run", None)
+
+    def no_credit(job):
+        raise AIFatalError("Anthropic credit balance is too low")
+
+    runner.ai = SimpleNamespace(score_fit=no_credit)
+    job = Job(**{**JOB.__dict__, "concerns": [], "description": LONG_DESCRIPTION})
+    with pytest.raises(AIFatalError):
+        runner._process(site, job)
+
+
+def test_old_unscored_flags_are_rescored(cfg, tmp_path):
+    from jobbot.models import ApplyResult, Status
+    tracker = Tracker(str(tmp_path / "t.db"))
+    job = Job(**{**JOB.__dict__, "concerns": []})
+    tracker.record(job, ApplyResult(Status.FLAGGED, "not scored: Anthropic API error 400: credit balance"))
+    assert not tracker.is_done(job)
+    tracker.record(job, ApplyResult(Status.FLAGGED, "salary not listed"))
+    assert tracker.is_done(job)
 
 
 def _runner(cfg, tmp_path, mode, fit):
@@ -160,3 +186,16 @@ def test_cover_letter_uses_master_letter(cfg):
                   example_letter="My master letter text")
     assert ai.cover_letter(JOB) == "Dear Hiring Manager, ..."
     assert "My master letter text" in msgs.calls[0]["messages"][0]["content"]
+
+
+def test_scoring_can_use_its_own_model_and_effort(cfg):
+    msgs = FakeMessages(parsed=FitScore(score=50, reason="", hard_exclusion="", concerns=[]))
+    ai = make_ai(cfg, msgs)
+    ai.cfg.scoring_model, ai.cfg.scoring_effort = "claude-haiku-5-5", "low"
+    ai.score_fit(JOB)
+    assert msgs.calls[0]["model"] == "claude-haiku-5-5"
+    assert msgs.calls[0]["output_config"] == {"effort": "low"}
+    msgs.text = "Dear Hiring Manager"
+    ai.cover_letter(JOB)
+    assert msgs.calls[1]["model"] == "claude-opus-5-5"     # letters keep the main model
+    assert msgs.calls[1]["output_config"] == {"effort": "medium"}

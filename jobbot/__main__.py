@@ -64,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
+        from .ai import AIFatalError
         from .runner import Runner
         mode = args.mode or cfg.mode
         runner = Runner(cfg, mode, args.max, args.recheck, args.debug)
@@ -71,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
             stats = runner.run(args.site or cfg.sites)
         except KeyboardInterrupt:
             print("\nStopped.")
+            stats = runner.stats
+        except AIFatalError as e:
+            print(f"\nStopped: {e}")
             stats = runner.stats
         print("\nSummary: " + (", ".join(f"{k}={v}" for k, v in sorted(stats.items())) or "nothing processed"))
         return 0
