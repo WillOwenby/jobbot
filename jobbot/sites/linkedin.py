@@ -133,6 +133,9 @@ class LinkedIn(JobSite):
 
     def search(self, query: str, location: str) -> Iterator[Job]:
         s = self.cfg.search
+        if s.remote and "remote" not in query.lower():
+            # The listing feed ignores the remote filter (f_WT); the word itself helps a lot.
+            query = f"{query} remote"
         params = {
             "keywords": query,
             "location": location,

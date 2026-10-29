@@ -239,6 +239,7 @@ def test_linkedin_search_uses_listing_feed(context, cfg, monkeypatch):
     jobs = list(site.search("Healthcare IT Manager", "United States"))
     assert [j.job_id for j in jobs] == ["4474152709", "4462868107"]
     assert "f_AL=true" in urls[0] and "f_WT=2" in urls[0] and "start=0" in urls[0]
+    assert "keywords=Healthcare+IT+Manager+remote" in urls[0]
     assert len(urls) == 2  # stops at the first empty page
 
 
