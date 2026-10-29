@@ -15,6 +15,8 @@ from .sites import SITES
 from .sites.base import JobSite
 from .tracker import Tracker
 
+MIN_DESCRIPTION = 200  # characters; anything shorter isn't a real job posting
+
 log = logging.getLogger(__name__)
 
 
@@ -79,8 +81,11 @@ class Runner:
         if reason := reject_reason(job, self.cfg.filters):  # now with the description
             return ApplyResult(Status.SKIPPED, reason)
 
-        if self.ai and job.description:
+        if self.ai:
             from .ai import AIError
+            if len(job.description.strip()) < MIN_DESCRIPTION:
+                # Never pass a job through unscored; a person should look at it.
+                return ApplyResult(Status.FLAGGED, "couldn't read the job description, so it wasn't scored")
             try:
                 fit = self.ai.score_fit(job)
                 job.fit_score, job.fit_reason, job.concerns = fit.score, fit.reason, fit.concerns
@@ -93,6 +98,7 @@ class Runner:
                     return ApplyResult(Status.SKIPPED, f"fit score {fit.score} < {self.cfg.ai.min_fit_score}")
             except AIError as e:
                 log.warning("    could not score fit: %s", e)
+                return ApplyResult(Status.FLAGGED, f"not scored: {e}")
 
         if self.mode == "dry-run":
             return ApplyResult(Status.DRY_RUN, "would apply" + (" (has concerns)" if job.concerns else ""))

@@ -260,7 +260,7 @@ NEW_LAYOUT_JOB = """
   <h2>About the job</h2>
   <span data-testid="expandable-text-box" id="box">Short start of the posting...</span>
   <button data-testid="expandable-text-button"
-          onclick="document.getElementById('box').innerText = 'Full posting: Remote, $115k-$130k base.'">more</button>
+          onclick="document.getElementById('box').innerText = 'Full posting: Remote, $115k-$130k base. ' + 'Details. '.repeat(40)">more</button>
 </div>
 </body></html>
 """
@@ -274,3 +274,27 @@ def test_linkedin_job_page_new_layout(context, cfg):
     assert site.open(job) is None                      # Easy Apply found
     assert "Full posting: Remote, $115k-$130k base." in job.description
     assert (job.title, job.company) == ("Clinical Customer Success & Adoption Manager", "Brainreader")
+
+
+SLOW_DESCRIPTION_JOB = """
+<html><head><title>RPA Manager | Corewell Health | LinkedIn</title></head><body>
+<article></article>
+<button aria-label="Easy Apply to this job">Easy Apply</button>
+<div componentkey="JobDetails_AboutTheJob_4011112222"><h2>About the job</h2><span id="box"></span></div>
+<script>
+  setTimeout(() => {
+    document.getElementById('box').innerText = 'Lead the enterprise RPA program. '.repeat(20);
+  }, 1500);
+</script>
+</body></html>
+"""
+
+
+def test_linkedin_waits_for_description_text(context, cfg):
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=SLOW_DESCRIPTION_JOB, content_type="text/html"))
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    job = Job("linkedin", "4011112222", "RPA Manager", "Corewell Health", "",
+              "https://www.linkedin.com/jobs/view/4011112222/")
+    assert site.open(job) is None
+    assert job.description.count("Lead the enterprise RPA program.") == 20

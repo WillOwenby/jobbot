@@ -83,6 +83,16 @@ CARD_NOISE = re.compile(
 
 DESCRIPTION = ("[componentkey^='JobDetails_AboutTheJob_'], #job-details, .jobs-description__content, .jobs-description-content__text, "
                ".jobs-box__html-content, [class*='jobs-description'], article")
+MIN_DESCRIPTION = 200  # characters; less than this is a placeholder, not a posting
+# Text of the longest element matching a selector (several can match while the page loads).
+BEST_TEXT_JS = """
+sel => [...document.querySelectorAll(sel)].map(e => e.innerText || '')
+                                          .reduce((a, b) => (b.length > a.length ? b : a), '')
+"""
+# Ready when the text has arrived, or when a "more" button shows there's more to reveal.
+DESCRIPTION_READY_JS = f"""
+([sel, min, more]) => ({BEST_TEXT_JS.strip()})(sel).length > min || !!document.querySelector(more)
+"""
 EXPAND_DESCRIPTION = "[data-testid='expandable-text-button'], button[aria-label*='see more' i]"
 TOP_CARD_COMPANY = ".job-details-jobs-unified-top-card__company-name, a[href*='/company/']"
 EASY_APPLY_BUTTON = ("button.jobs-apply-button:has-text('Easy Apply'), button[aria-label*='Easy Apply'], "
@@ -195,21 +205,25 @@ class LinkedIn(JobSite):
     def open(self, job: Job) -> ApplyResult | None:
         self.goto(job.url)
         try:
-            box = self.page.locator(DESCRIPTION).first
-            box.wait_for(timeout=15000)
-            expand = box.locator(EXPAND_DESCRIPTION).first
+            # The description box renders before its text arrives; wait for real content.
+            self.page.wait_for_function(DESCRIPTION_READY_JS,
+                                        arg=[DESCRIPTION, MIN_DESCRIPTION, EXPAND_DESCRIPTION], timeout=15000)
+            expand = self.page.locator(f"[componentkey^='JobDetails_AboutTheJob_'] :is({EXPAND_DESCRIPTION})").first
+            if not expand.count():
+                expand = self.page.locator(EXPAND_DESCRIPTION).first
             if expand.count():
                 try:
                     expand.click(timeout=3000)  # the description is truncated behind "more"
                     self.page.wait_for_timeout(500)
                 except PlaywrightError:
                     pass
-            job.description = box.inner_text()
+            job.description = self.page.evaluate(BEST_TEXT_JS, DESCRIPTION)
         except PlaywrightTimeout:
             log.info("    couldn't find the job description; using the whole page text")
             self.save_debug("job-no-description")
             main = self.page.locator("main")
             job.description = (main.first if main.count() else self.page.locator("body")).inner_text()
+        log.debug("    description: %d chars", len(job.description))
         if self.debug:
             self.save_debug("job-page")
         # The page title is "Job title | Company | LinkedIn" on every layout so far.

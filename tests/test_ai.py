@@ -87,6 +87,31 @@ def test_fit_prompt_includes_criteria(cfg):
     assert "Minimum base salary $154,000" in msgs.calls[0]["messages"][0]["content"]
 
 
+LONG_DESCRIPTION = "Lead a remote team building Epic and RPA automation. " * 10
+
+
+def test_unreadable_description_is_flagged_not_passed_through(cfg, tmp_path):
+    fit = FitScore(score=99, reason="", hard_exclusion="", concerns=[])
+    for mode in ("dry-run", "review", "auto"):
+        runner, site = _runner(cfg, tmp_path, mode, fit)
+        job = Job(**{**JOB.__dict__, "concerns": [], "description": "About the job"})
+        result = runner._process(site, job)
+        assert result.status.value == "flagged", mode
+        assert "wasn't scored" in result.detail
+
+
+def test_ai_error_is_flagged(cfg, tmp_path):
+    runner, site = _runner(cfg, tmp_path, "review", None)
+
+    def boom(job):
+        raise AIError("rate limited")
+
+    runner.ai = SimpleNamespace(score_fit=boom)
+    job = Job(**{**JOB.__dict__, "concerns": [], "description": LONG_DESCRIPTION})
+    result = runner._process(site, job)
+    assert (result.status.value, result.detail) == ("flagged", "not scored: rate limited")
+
+
 def _runner(cfg, tmp_path, mode, fit):
     from jobbot.runner import Runner
     cfg.database = str(tmp_path / "t.db")
@@ -100,7 +125,7 @@ def _runner(cfg, tmp_path, mode, fit):
 def test_hard_exclusion_skips(cfg, tmp_path):
     fit = FitScore(score=90, reason="", hard_exclusion="salary max $140k", concerns=[])
     runner, site = _runner(cfg, tmp_path, "auto", fit)
-    job = Job(**{**JOB.__dict__, "concerns": []})
+    job = Job(**{**JOB.__dict__, "concerns": [], "description": LONG_DESCRIPTION})
     result = runner._process(site, job)
     assert result.detail == "excluded: salary max $140k"
 
@@ -108,7 +133,7 @@ def test_hard_exclusion_skips(cfg, tmp_path):
 def test_concerns_flag_instead_of_auto_submit(cfg, tmp_path):
     fit = FitScore(score=90, reason="", hard_exclusion="", concerns=["salary not listed"])
     runner, site = _runner(cfg, tmp_path, "auto", fit)
-    job = Job(**{**JOB.__dict__, "concerns": []})
+    job = Job(**{**JOB.__dict__, "concerns": [], "description": LONG_DESCRIPTION})
     result = runner._process(site, job)
     assert result.status.value == "flagged"
     runner.tracker.record(job, result)
