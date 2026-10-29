@@ -59,6 +59,21 @@ For each form field, jobbot tries these in order:
 
 If you don't like an answer, add a rule for that question. Rules always win over Claude.
 
+## Using your Claude plan instead of API credit
+
+Set `ai.provider: claude-code` to send every AI request through the Claude Code
+command-line tool. It then counts against your Claude Pro or Max plan's usage limits,
+and there's no API billing. Set it up once:
+
+```powershell
+irm https://claude.ai/install.ps1 | iex   # Windows; see claude.com/claude-code for Mac/Linux
+claude                                     # log in with your Claude account, then type /exit
+```
+
+jobbot runs `claude` with all tools disabled, so the model only answers; it can't run
+anything on your computer. If you hit your plan's usage limit, the run stops cleanly. Run
+it again after the limit resets; nothing is lost.
+
 ## Costs
 
 Each job that passes the keyword filters costs one Claude call to score fit. Jobs you actually apply to cost one more call for the cover letter, plus one call for each new screening question. Your resume is sent as a cached prompt prefix, so repeated calls are cheaper. Set `ai.effort: low` to spend less, or `ai.enabled: false` to run with no AI at all. Requests that a safety filter declines are retried on a fallback model automatically (`fallbacks: "default"`).

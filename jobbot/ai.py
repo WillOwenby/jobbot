@@ -84,7 +84,6 @@ class ResumeAI:
                  example_letter: str = ""):
         self.cfg = cfg
         self.example_letter = example_letter.strip()
-        self.client = client or anthropic.Anthropic()
         system = SYSTEM_PROMPT.format(
             name=f"{profile.first_name} {profile.last_name}", email=profile.email,
             phone=profile.phone, city=profile.city or "(not given)",
@@ -93,8 +92,20 @@ class ResumeAI:
         )
         # The resume is the same on every call, so cache it.
         self.system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        self.claude_code = None
+        if cfg.provider == "claude-code" and client is None:
+            from .claude_code import ClaudeCodeClient, ClaudeCodeError
+            try:
+                self.claude_code = ClaudeCodeClient(system, cfg.claude_path)
+            except ClaudeCodeError as e:
+                raise AIFatalError(str(e)) from None
+            self.client = None
+        else:
+            self.client = client or anthropic.Anthropic()
 
     def _request(self, prompt: str, output_format=None, model: str = "", effort: str = ""):
+        if self.claude_code is not None:
+            return self._request_claude_code(prompt, output_format, model, effort)
         kwargs = dict(
             model=model or self.cfg.model,
             max_tokens=16000,
@@ -128,6 +139,20 @@ class ResumeAI:
             raise AIError("the model declined this request")
         if resp.stop_reason == "max_tokens":
             raise AIError("the response was cut off (max_tokens)")
+        return resp
+
+    def _request_claude_code(self, prompt: str, output_format, model: str, effort: str):
+        from .claude_code import ClaudeCodeError
+        schema = output_format.model_json_schema() if output_format is not None else None
+        try:
+            resp = self.claude_code.ask(prompt, model or self.cfg.model, effort or self.cfg.effort, schema)
+        except ClaudeCodeError as e:
+            raise (AIFatalError if e.fatal else AIError)(str(e)) from None
+        if output_format is not None:
+            try:
+                resp.parsed_output = output_format.model_validate(resp.parsed_output)
+            except ValueError as e:
+                raise AIError(f"Claude Code returned an unexpected answer shape: {e}") from None
         return resp
 
     @staticmethod

@@ -46,9 +46,13 @@ answers:
   - { match: "country code", answer: "United States (+1)" }
   - { match: "gender|race|ethnicity|veteran|disability", answer: "I don't wish to answer" }
 
-# AI features (Claude). Needs ANTHROPIC_API_KEY in your environment.
+# AI features (Claude).
 ai:
   enabled: true
+  # api         - Anthropic API; needs ANTHROPIC_API_KEY and API credit (billed per use)
+  # claude-code - your Claude Pro/Max plan through the local `claude` command (no API billing;
+  #               uses your plan's usage limits). Install Claude Code and log in once first.
+  provider: api
   model: claude-opus-5-5
   effort: medium               # low is cheaper/faster; high is more careful
   scoring_model: ""            # cheaper model for job-fit scoring only (e.g. claude-haiku-5-5); "" = model

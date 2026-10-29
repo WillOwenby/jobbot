@@ -50,6 +50,8 @@ class AnswerRule:
 @dataclass
 class AIConfig:
     enabled: bool = False
+    provider: str = "api"     # "api" (ANTHROPIC_API_KEY, billed per use) or "claude-code" (your Claude plan)
+    claude_path: str = ""     # path to the claude command if it isn't on PATH
     model: str = "claude-opus-5-5"
     effort: str = "medium"
     scoring_model: str = ""   # model for job-fit scoring; empty = same as `model`
@@ -132,6 +134,8 @@ def load_config(path: str | Path) -> Config:
     ]
     cfg = _build(Config, kwargs, "top level")
 
+    if cfg.ai.provider not in ("api", "claude-code"):
+        raise ValueError(f"ai.provider must be 'api' or 'claude-code', got '{cfg.ai.provider}'")
     if cfg.mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got '{cfg.mode}'")
     for site in cfg.sites:
