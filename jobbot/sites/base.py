@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
+from datetime import datetime
+from pathlib import Path
 from typing import Iterator
 
 from playwright.sync_api import BrowserContext, Locator
@@ -10,6 +13,8 @@ from ..config import Config
 from ..forms import FormFiller
 from ..models import ApplyResult, Job
 from ..prompter import Prompter
+
+log = logging.getLogger(__name__)
 
 MAX_FORM_STEPS = 15
 
@@ -24,6 +29,22 @@ class JobSite(ABC):
         self.filler = filler
         self.prompter = prompter
         self.page = context.pages[0] if context.pages else context.new_page()
+        self._debug_saved: set[str] = set()
+
+    def save_debug(self, label: str) -> None:
+        """Save a screenshot and the HTML of the current page (once per label per run)."""
+        if label in self._debug_saved:
+            return
+        self._debug_saved.add(label)
+        out = Path(self.cfg.output_dir) / "debug"
+        out.mkdir(parents=True, exist_ok=True)
+        stem = out / f"{self.name}-{label}-{datetime.now():%Y%m%d-%H%M%S}"
+        try:
+            self.page.screenshot(path=f"{stem}.png", full_page=True)
+            Path(f"{stem}.html").write_text(self.page.content(), encoding="utf-8")
+            log.warning("    saved debug snapshot: %s.png (and .html)", stem)
+        except PlaywrightError as e:
+            log.warning("    could not save debug snapshot: %s", e)
 
     def goto(self, url: str, attempts: int = 3) -> None:
         """page.goto that tolerates the site redirecting mid-load (e.g. LinkedIn right after login)."""

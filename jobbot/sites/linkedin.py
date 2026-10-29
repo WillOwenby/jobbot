@@ -6,6 +6,7 @@ below are the first place to look: open DevTools on the page and update them.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Iterator
 from urllib.parse import urlencode
 
@@ -20,13 +21,66 @@ log = logging.getLogger(__name__)
 SEARCH_URL = "https://www.linkedin.com/jobs/search/"
 PAGE_SIZE = 25
 
-CARD = "li[data-occludable-job-id]"
-CARD_TITLE = "a.job-card-list__title--link, a.job-card-list__title, a.job-card-container__link"
-CARD_COMPANY = ".artdeco-entity-lockup__subtitle, .job-card-container__primary-description"
-CARD_LOCATION = ".artdeco-entity-lockup__caption, .job-card-container__metadata-item"
+# Job cards are found through their links, which LinkedIn can't change without
+# breaking its own URLs, rather than through card markup, which changes often.
+JOB_LINK = "a[href*='/jobs/view/'], a[href*='currentJobId='], [data-job-id], [data-occludable-job-id]"
 
-DESCRIPTION = "#job-details, .jobs-description__content, .jobs-description-content__text"
-EASY_APPLY_BUTTON = "button.jobs-apply-button:has-text('Easy Apply'), button[aria-label*='Easy Apply']"
+COLLECT_JOBS_JS = r"""
+() => {
+  const jobs = new Map();
+  for (const a of document.querySelectorAll("a[href*='/jobs/view/'], a[href*='currentJobId=']")) {
+    const m = a.href.match(/\/jobs\/view\/(?:[^\/?]*?-)?(\d{6,})/) || a.href.match(/currentJobId=(\d{6,})/);
+    if (!m || jobs.has(m[1])) continue;
+    const card = a.closest('li, [data-job-id], [data-occludable-job-id], .job-card-container') || a.parentElement;
+    const lines = (card.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+    const visible = a.querySelector('[aria-hidden="true"], strong') || a;
+    const title = ((visible.innerText || '').split('\n')[0] || a.getAttribute('aria-label') || lines[0] || '').trim();
+    jobs.set(m[1], {id: m[1], title, lines});
+  }
+  // Cards that carry the job id as an attribute instead of a direct link.
+  for (const card of document.querySelectorAll('[data-job-id], [data-occludable-job-id]')) {
+    const id = card.getAttribute('data-job-id') || card.getAttribute('data-occludable-job-id');
+    if (!/^\d{6,}$/.test(id || '') || jobs.has(id)) continue;
+    const lines = (card.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+    const heading = card.querySelector('h3, strong, [class*="title"]');
+    const title = ((heading && heading.innerText) || lines[0] || '').split('\n')[0].trim();
+    jobs.set(id, {id, title, lines});
+  }
+  return [...jobs.values()];
+}
+"""
+
+SCROLL_RESULTS_JS = r"""
+() => {
+  // Scroll the results list (or the window) one screen down so more cards render.
+  let el = document.querySelector("a[href*='/jobs/view/'], a[href*='currentJobId=']");
+  while (el && el !== document.body) {
+    const style = getComputedStyle(el);
+    if (el.scrollHeight > el.clientHeight + 20 && /(auto|scroll)/.test(style.overflowY)) {
+      const before = el.scrollTop;
+      el.scrollTop += el.clientHeight;
+      return el.scrollTop > before;
+    }
+    el = el.parentElement;
+  }
+  const before = window.scrollY;
+  window.scrollBy(0, window.innerHeight);
+  return window.scrollY > before;
+}
+"""
+
+CARD_NOISE = re.compile(
+    r"^(promoted|easy apply|viewed|applied|actively (reviewing|recruiting).*|be an early applicant|"
+    r"\d+ (applicants?|connections?).*|.*\bago|with verification|new|dismiss.*|save|"
+    r"\$[\d,.]+k?.*|.*school alum.*|.*works? here)$",
+    re.I,
+)
+
+DESCRIPTION = ("#job-details, .jobs-description__content, .jobs-description-content__text, "
+               ".jobs-box__html-content, [class*='jobs-description'], article")
+TOP_CARD_COMPANY = ".job-details-jobs-unified-top-card__company-name, a[href*='/company/']"
+EASY_APPLY_BUTTON = ("button.jobs-apply-button:has-text('Easy Apply'), button[aria-label*='Easy Apply'], "
+                     "a[aria-label*='Easy Apply'], button:has-text('Easy Apply'), a:has-text('Easy Apply')")
 ALREADY_APPLIED = "text=/Applied\\s+\\d+\\s+\\w+\\s+ago/i"
 
 MODAL = ".jobs-easy-apply-modal, div[role=dialog]:has(button[aria-label*='Dismiss'])"
@@ -71,33 +125,32 @@ class LinkedIn(JobSite):
             params["start"] = page_num * PAGE_SIZE
             self.goto(f"{SEARCH_URL}?{urlencode(params)}")
             try:
-                self.page.locator(CARD).first.wait_for(timeout=15000)
+                self.page.locator(JOB_LINK).first.wait_for(timeout=15000)
             except PlaywrightTimeout:
+                log.info("    no jobs found on results page %d", page_num + 1)
+                self.save_debug("search-no-jobs")
                 return
             # Collect the whole page before yielding: applying navigates away.
-            jobs = [j for j in self._collect_cards() if j.job_id not in seen]
+            jobs = [j for j in self._collect_jobs() if j.job_id not in seen]
+            log.info("    results page %d: %d new jobs", page_num + 1, len(jobs))
             if not jobs:
                 return
             seen.update(j.job_id for j in jobs)
             yield from jobs
 
-    def _collect_cards(self) -> list[Job]:
+    def _collect_jobs(self) -> list[Job]:
+        for _ in range(12):  # cards render lazily as the list scrolls
+            if not self.page.evaluate(SCROLL_RESULTS_JS):
+                break
+            self.page.wait_for_timeout(400)
         jobs = []
-        cards = self.page.locator(CARD)
-        for i in range(cards.count()):
-            card = cards.nth(i)
-            try:
-                card.scroll_into_view_if_needed(timeout=3000)  # cards render lazily
-            except PlaywrightTimeout:
-                continue
-            self.page.wait_for_timeout(150)
-            job_id = card.get_attribute("data-occludable-job-id")
-            title = text_of(card, CARD_TITLE)
-            if job_id and title:
+        for raw in self.page.evaluate(COLLECT_JOBS_JS):
+            title = clean_title(raw["title"])
+            company, location = parse_card_lines(title, raw["lines"])
+            if title:
                 jobs.append(Job(
-                    site=self.name, job_id=job_id, title=title,
-                    company=text_of(card, CARD_COMPANY), location=text_of(card, CARD_LOCATION),
-                    url=f"https://www.linkedin.com/jobs/view/{job_id}/",
+                    site=self.name, job_id=raw["id"], title=title, company=company,
+                    location=location, url=f"https://www.linkedin.com/jobs/view/{raw['id']}/",
                 ))
         return jobs
 
@@ -107,10 +160,16 @@ class LinkedIn(JobSite):
             self.page.locator(DESCRIPTION).first.wait_for(timeout=15000)
             job.description = self.page.locator(DESCRIPTION).first.inner_text()
         except PlaywrightTimeout:
-            log.debug("no description found for %s", job.url)
+            log.info("    couldn't find the job description; using the whole page text")
+            self.save_debug("job-no-description")
+            main = self.page.locator("main")
+            job.description = (main.first if main.count() else self.page.locator("body")).inner_text()
+        if not job.company:
+            job.company = text_of(self.page, TOP_CARD_COMPANY)
         if self.page.locator(ALREADY_APPLIED).count():
             return ApplyResult(Status.ALREADY_APPLIED)
         if not self.page.locator(EASY_APPLY_BUTTON).count():
+            self.save_debug("job-no-easy-apply")
             return ApplyResult(Status.SKIPPED, "no Easy Apply button")
         return None
 
@@ -119,6 +178,7 @@ class LinkedIn(JobSite):
             return self._apply(job)
         except PlaywrightError as e:
             log.exception("LinkedIn apply failed")
+            self.save_debug("apply-error")
             self._discard()
             return ApplyResult(Status.FAILED, str(e).split("\n")[0])
 
@@ -177,3 +237,18 @@ class LinkedIn(JobSite):
                 self.page.locator(DISCARD_CONFIRM).first.click(timeout=3000)
         except PlaywrightError:
             pass
+
+
+def clean_title(title: str) -> str:
+    """Drop LinkedIn's screen-reader extras, e.g. "Title Title with verification" -> "Title"."""
+    title = re.sub(r"\s*with verification\s*$", "", title.strip(), flags=re.I)
+    m = re.fullmatch(r"(.+?)\s*\1", title)
+    return m.group(1) if m else title
+
+
+def parse_card_lines(title: str, lines: list[str]) -> tuple[str, str]:
+    """Pick company and location out of a result card's text lines."""
+    rest = [ln for ln in lines if ln != title and not CARD_NOISE.match(ln) and title not in ln]
+    company = rest[0] if rest else ""
+    location = rest[1] if len(rest) > 1 else ""
+    return company, location

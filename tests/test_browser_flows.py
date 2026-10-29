@@ -149,3 +149,52 @@ def test_goto_retries_when_site_redirects_mid_load(context, cfg):
     site.page = FlakyPage()
     assert site.is_logged_in()
     assert len(calls) == 2
+
+
+LINK_LAYOUT = """
+<ul>
+  <li><div><a href="https://www.linkedin.com/jobs/view/4012345678/?refId=abc">
+        <span>Clinical Applications Manager</span><span>Clinical Applications Manager with verification</span></a>
+      <div>Trinity Health</div><div>United States (Remote)</div><div>$150K/yr - $180K/yr</div>
+      <div>Promoted</div><div>Easy Apply</div></div></li>
+  <li><div><a href="/jobs/view/director-of-healthcare-it-at-acme-4087654321?trk=x">Director of Healthcare IT</a>
+      <div>Acme Health</div><div>Michigan, United States (Remote)</div><div>2 days ago</div></div></li>
+</ul>
+"""
+
+ATTRIBUTE_LAYOUT = """
+<div style="height:300px; overflow-y:auto" id="list">
+  <div style="height:2000px">
+    <div data-job-id="4011112222"><h3>RPA Manager</h3><p>Corewell Health</p><p>United States (Remote)</p></div>
+    <div data-job-id="not-a-job"><h3>Ad</h3></div>
+  </div>
+</div>
+"""
+
+
+def search_jobs(context, cfg, html):
+    context.route("https://www.linkedin.com/**", lambda route: route.fulfill(body=html, content_type="text/html"))
+    cfg.search.max_pages = 1
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    return list(site.search("healthcare it manager", "United States"))
+
+
+def test_linkedin_search_finds_jobs_by_link(context, cfg):
+    jobs = search_jobs(context, cfg, LINK_LAYOUT)
+    assert [(j.job_id, j.title, j.company, j.location) for j in jobs] == [
+        ("4012345678", "Clinical Applications Manager", "Trinity Health", "United States (Remote)"),
+        ("4087654321", "Director of Healthcare IT", "Acme Health", "Michigan, United States (Remote)"),
+    ]
+    assert jobs[0].url == "https://www.linkedin.com/jobs/view/4012345678/"
+
+
+def test_linkedin_search_finds_jobs_by_attribute(context, cfg):
+    jobs = search_jobs(context, cfg, ATTRIBUTE_LAYOUT)
+    assert [(j.job_id, j.title, j.company) for j in jobs] == [("4011112222", "RPA Manager", "Corewell Health")]
+
+
+def test_linkedin_search_saves_debug_snapshot_when_empty(context, cfg, tmp_path):
+    cfg.output_dir = str(tmp_path)
+    assert search_jobs(context, cfg, "<p>No matching jobs found.</p>") == []
+    snapshots = sorted(p.suffix for p in (tmp_path / "debug").iterdir())
+    assert snapshots == [".html", ".png"]
