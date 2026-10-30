@@ -1,4 +1,7 @@
 """Drive the real form-filling and LinkedIn Easy Apply code against fake pages."""
+from pathlib import Path
+
+import pytest
 from jobbot.forms import AnswerBook, Answerer, FormFiller
 from jobbot.models import Job, Status
 from jobbot.prompter import Prompter
@@ -96,6 +99,15 @@ function submitApp() {
 """
 
 
+@pytest.fixture(autouse=True)
+def no_waiting(monkeypatch):
+    """The real pacing (seconds between requests) would make tests slow."""
+    from jobbot.sites import linkedin as li
+    monkeypatch.setattr(li, "PUBLIC_DELAY", (0, 0))
+    monkeypatch.setattr(li, "RATE_LIMIT_WAIT", 0)
+    monkeypatch.setattr(li, "MIN_LOGGED_IN_GAP", 0)
+
+
 def linkedin(context, cfg, extra_html=""):
     html = LINKEDIN_JOB.replace("window.extra = '';", f"window.extra = `{extra_html}`;")
     context.route("https://www.linkedin.com/**", lambda route: route.fulfill(body=html, content_type="text/html"))
@@ -107,8 +119,6 @@ JOB = Job("linkedin", "123", "Python Developer", "Acme", "Remote", "https://www.
 
 def test_linkedin_easy_apply_end_to_end(context, cfg):
     site = linkedin(context, cfg)
-    assert site.open(JOB) is None
-    assert "Django" in JOB.description
 
     result = site.apply(JOB)
 
@@ -119,7 +129,6 @@ def test_linkedin_easy_apply_end_to_end(context, cfg):
 def test_linkedin_unknown_required_question_discards_in_auto_mode(context, cfg):
     extra = '<label for="color">Favorite color *</label><input id="color" required>'
     site = linkedin(context, cfg, extra)
-    site.open(JOB)
 
     result = site.apply(JOB)
 
@@ -151,62 +160,12 @@ def test_goto_retries_when_site_redirects_mid_load(context, cfg):
     assert len(calls) == 2
 
 
-LINK_LAYOUT = """
-<ul>
-  <li><div><a href="https://www.linkedin.com/jobs/view/4012345678/?refId=abc">
-        <span>Clinical Applications Manager</span><span>Clinical Applications Manager with verification</span></a>
-      <div>Trinity Health</div><div>United States (Remote)</div><div>$150K/yr - $180K/yr</div>
-      <div>Promoted</div><div>Easy Apply</div></div></li>
-  <li><div><a href="/jobs/view/director-of-healthcare-it-at-acme-4087654321?trk=x">Director of Healthcare IT</a>
-      <div>Acme Health</div><div>Michigan, United States (Remote)</div><div>2 days ago</div></div></li>
-</ul>
-"""
-
-ATTRIBUTE_LAYOUT = """
-<div style="height:300px; overflow-y:auto" id="list">
-  <div style="height:2000px">
-    <div data-job-id="4011112222"><h3>RPA Manager</h3><p>Corewell Health</p><p>United States (Remote)</p></div>
-    <div data-job-id="not-a-job"><h3>Ad</h3></div>
-  </div>
-</div>
-"""
-
-
-def search_jobs(context, cfg, html):
-    """Search via the logged-in results page (the fallback when the listing feed is unavailable)."""
-    context.route("https://www.linkedin.com/**", lambda route: route.fulfill(body=html, content_type="text/html"))
-    cfg.search.max_pages = 1
-    site = LinkedIn(context, cfg, None, Prompter("auto"))
-    params = {"keywords": "healthcare it manager", "location": "United States"}
-    return list(site._search_page(params))
-
-
-def test_linkedin_search_finds_jobs_by_link(context, cfg):
-    jobs = search_jobs(context, cfg, LINK_LAYOUT)
-    assert [(j.job_id, j.title, j.company, j.location) for j in jobs] == [
-        ("4012345678", "Clinical Applications Manager", "Trinity Health", "United States (Remote)"),
-        ("4087654321", "Director of Healthcare IT", "Acme Health", "Michigan, United States (Remote)"),
-    ]
-    assert jobs[0].url == "https://www.linkedin.com/jobs/view/4012345678/"
-
-
-def test_linkedin_search_finds_jobs_by_attribute(context, cfg):
-    jobs = search_jobs(context, cfg, ATTRIBUTE_LAYOUT)
-    assert [(j.job_id, j.title, j.company) for j in jobs] == [("4011112222", "RPA Manager", "Corewell Health")]
-
-
-def test_linkedin_search_saves_debug_snapshot_when_empty(context, cfg, tmp_path):
-    cfg.output_dir = str(tmp_path)
-    assert search_jobs(context, cfg, "<p>No matching jobs found.</p>") == []
-    snapshots = sorted(p.suffix for p in (tmp_path / "debug").iterdir())
-    assert snapshots == [".html", ".png"]
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_parse_listing_feed():
-    from pathlib import Path
     from jobbot.sites.linkedin import parse_listing
-    text = (Path(__file__).parent / "fixtures" / "linkedin_listing.html").read_text(encoding="utf-8")
-    jobs = parse_listing(text)
+    jobs = parse_listing((FIXTURES / "linkedin_listing.html").read_text(encoding="utf-8"))
     assert [(j.job_id, j.title, j.company, j.location) for j in jobs] == [
         ("4474152709", "Information Technology Manager", "Clinical Management Consultants", "Louisiana, United States"),
         ("4462868107", "Information Systems Manager", "Mount Sinai Medical Center", "Miami, FL"),
@@ -214,151 +173,86 @@ def test_parse_listing_feed():
     assert jobs[0].url == "https://www.linkedin.com/jobs/view/4474152709/"
 
 
-class FakeResponse:
-    def __init__(self, status, body):
-        self.status, self.ok, self._body = status, status == 200, body
+def test_parse_public_posting():
+    from jobbot.sites.linkedin import parse_posting
+    p = parse_posting((FIXTURES / "linkedin_posting.html").read_text(encoding="utf-8"))
+    assert p["title"] == "Manager, IS Laboratory Standards - Remote based in the US"
+    assert p["company"] == "Tenet Healthcare"
+    assert len(p["description"]) > 5000 and p["description"].startswith("Job Summary")
 
-    def text(self):
-        return self._body
 
-
-def test_linkedin_search_uses_listing_feed(context, cfg, monkeypatch):
-    from pathlib import Path
-    feed = (Path(__file__).parent / "fixtures" / "linkedin_listing.html").read_text(encoding="utf-8")
-    pages = {0: feed}
+def test_search_uses_public_feed_only(context, cfg, monkeypatch):
+    feed = (FIXTURES / "linkedin_listing.html").read_text(encoding="utf-8")
     urls = []
 
     def fake_fetch(url):
         urls.append(url)
-        start = int(url.rsplit("start=", 1)[1])
-        return 200, pages.get(start, "")
+        return 200, (feed if url.endswith("start=0") else "")
 
     site = LinkedIn(context, cfg, None, Prompter("auto"))
-    monkeypatch.setattr(site, "_fetch_listing", fake_fetch)
+    monkeypatch.setattr(site, "_fetch_public", fake_fetch)
     cfg.search.remote = True
     jobs = list(site.search("Healthcare IT Manager", "United States"))
-    assert [j.job_id for j in jobs] == ["4474152709", "4462868107"]
-    assert "f_AL=true" in urls[0] and "f_WT=2" in urls[0] and "start=0" in urls[0]
-    assert "keywords=Healthcare+IT+Manager+remote" in urls[0]
-    assert len(urls) == 2  # stops at the first empty page
+    assert [(j.job_id, j.easy_apply) for j in jobs] == [("4474152709", True), ("4462868107", True)]
+    assert "f_AL=true" in urls[0] and "keywords=Healthcare+IT+Manager+remote" in urls[0]
+    assert len(urls) == 2                          # stops at the first empty page
+    assert site.page.url == "about:blank"          # the logged-in browser was never used
 
 
-def test_linkedin_search_falls_back_to_results_page(context, cfg, monkeypatch):
-    site = LinkedIn(context, cfg, None, Prompter("auto"))
-    monkeypatch.setattr(site, "_fetch_listing", lambda url: (429, ""))
-    context.route("https://www.linkedin.com/**",
-                  lambda route: route.fulfill(body=LINK_LAYOUT, content_type="text/html"))
-    cfg.search.max_pages = 1
-    jobs = list(site.search("x", "United States"))
-    assert [j.job_id for j in jobs] == ["4012345678", "4087654321"]
-
-
-NEW_LAYOUT_JOB = """
-<html><head><title>Clinical Customer Success &amp; Adoption Manager | Brainreader | LinkedIn</title></head>
-<body>
-<button aria-label="Easy Apply to this job">Easy Apply</button>
-<div componentkey="JobDetails_AboutTheJob_4482216525">
-  <h2>About the job</h2>
-  <span data-testid="expandable-text-box" id="box">Short start of the posting...</span>
-  <button data-testid="expandable-text-button"
-          onclick="document.getElementById('box').innerText = 'Full posting: Remote, $115k-$130k base. ' + 'Details. '.repeat(40)">more</button>
-</div>
-</body></html>
-"""
-
-
-def test_linkedin_job_page_new_layout(context, cfg):
-    context.route("https://www.linkedin.com/**",
-                  lambda route: route.fulfill(body=NEW_LAYOUT_JOB, content_type="text/html"))
-    site = LinkedIn(context, cfg, None, Prompter("auto"))
-    job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
-    assert site.open(job) is None                      # Easy Apply found
-    assert "Full posting: Remote, $115k-$130k base." in job.description
-    assert (job.title, job.company) == ("Clinical Customer Success & Adoption Manager", "Brainreader")
-
-
-SLOW_DESCRIPTION_JOB = """
-<html><head><title>RPA Manager | Corewell Health | LinkedIn</title></head><body>
-<article></article>
-<button aria-label="Easy Apply to this job">Easy Apply</button>
-<div componentkey="JobDetails_AboutTheJob_4011112222"><h2>About the job</h2><span id="box"></span></div>
-<script>
-  setTimeout(() => {
-    document.getElementById('box').innerText = 'Lead the enterprise RPA program. '.repeat(20);
-  }, 1500);
-</script>
-</body></html>
-"""
-
-
-def test_linkedin_waits_for_description_text(context, cfg):
-    context.route("https://www.linkedin.com/**",
-                  lambda route: route.fulfill(body=SLOW_DESCRIPTION_JOB, content_type="text/html"))
-    site = LinkedIn(context, cfg, None, Prompter("auto"))
-    job = Job("linkedin", "4011112222", "RPA Manager", "Corewell Health", "",
-              "https://www.linkedin.com/jobs/view/4011112222/")
-    assert site.open(job) is None
-    assert job.description.count("Lead the enterprise RPA program.") == 20
-
-
-def workplace_page(tag):
-    return NEW_LAYOUT_JOB.replace(
-        '<button aria-label="Easy Apply to this job">Easy Apply</button>',
-        f'<a href="https://www.linkedin.com/jobs/view/4482216525/"><span>{tag}</span></a>'
-        '<a href="https://www.linkedin.com/jobs/view/4482216525/"><span>Full-time</span></a>'
-        '<button aria-label="Easy Apply to this job">Easy Apply</button>')
-
-
-def test_linkedin_reads_workplace_tag(context, cfg):
-    for tag in ("Remote", "Hybrid", "On-site"):
-        context.unroute("https://www.linkedin.com/**")
-        body = workplace_page(tag)
-        context.route("https://www.linkedin.com/**",
-                      lambda route: route.fulfill(body=body, content_type="text/html"))
-        site = LinkedIn(context, cfg, None, Prompter("auto"))
-        job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
-        site.open(job)
-        assert job.workplace == tag
-
-
-def test_non_remote_jobs_skipped_before_ai(cfg, tmp_path):
-    from types import SimpleNamespace
-    from jobbot.runner import Runner
-    cfg.database = str(tmp_path / "t.db")
-    cfg.search.remote = True
-    runner = Runner(cfg, "dry-run")
-    runner.ai = SimpleNamespace(score_fit=lambda job: (_ for _ in ()).throw(AssertionError("no AI call")))
-
-    def open_job(job):
-        job.workplace, job.description = "Hybrid", "x" * 500
-
-    site = SimpleNamespace(open=open_job)
-    job = Job("linkedin", "1", "IT Manager", "Acme", "", "u")
-    result = runner._process(site, job)
-    assert (result.status, result.detail) == (Status.SKIPPED, "listed as Hybrid, not remote")
-
-
-def test_external_jobs_are_scored_not_skipped(context, cfg):
-    page = NEW_LAYOUT_JOB.replace('<button aria-label="Easy Apply to this job">Easy Apply</button>',
-                                  '<button aria-label="Apply on company website">Apply</button>')
-    context.route("https://www.linkedin.com/**",
-                  lambda route: route.fulfill(body=page, content_type="text/html"))
-    site = LinkedIn(context, cfg, None, Prompter("auto"))
-    job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
-    assert site.open(job).detail == "no Easy Apply button"     # default: Easy Apply only
-    cfg.search.include_external_jobs = True
-    job = Job("linkedin", "4482216525", "", "", "", "https://www.linkedin.com/jobs/view/4482216525/")
-    assert site.open(job) is None and job.external
-
-
-def test_search_drops_easy_apply_filter_for_external(context, cfg, monkeypatch):
+def test_external_search_runs_a_second_pass_without_easy_apply(context, cfg, monkeypatch):
+    feed = (FIXTURES / "linkedin_listing.html").read_text(encoding="utf-8")
+    first = feed.split("<li")[0] + "<li" + feed.split("<li")[1]   # Easy Apply pass: first job only
     urls = []
-    site = LinkedIn(context, cfg, None, Prompter("auto"))
-    monkeypatch.setattr(site, "_fetch_listing", lambda url: urls.append(url) or (200, ""))
-    list(site.search("RPA Manager", "United States"))
+
+    def fake_fetch(url):
+        urls.append(url)
+        if not url.endswith("start=0"):
+            return 200, ""
+        return 200, (first if "f_AL=true" in url else feed)
+
     cfg.search.include_external_jobs = True
-    list(site.search("RPA Manager", "United States"))
-    assert "f_AL=true" in urls[0] and "f_AL" not in urls[1]
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    monkeypatch.setattr(site, "_fetch_public", fake_fetch)
+    jobs = list(site.search("RPA Manager", "United States"))
+    assert [(j.job_id, j.easy_apply) for j in jobs] == [("4474152709", True), ("4462868107", False)]
+    assert "f_AL=true" in urls[0] and "f_AL" not in urls[2]
+
+
+def test_open_reads_public_page_without_browser(context, cfg, monkeypatch):
+    posting = (FIXTURES / "linkedin_posting.html").read_text(encoding="utf-8")
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    monkeypatch.setattr(site, "_fetch_public", lambda url: (200, posting))
+    job = Job("linkedin", "4444978876", "", "", "", "https://www.linkedin.com/jobs/view/4444978876/",
+              easy_apply=True)
+    assert site.open(job) is None
+    assert job.company == "Tenet Healthcare" and len(job.description) > 5000
+    assert site.page.url == "about:blank"
+
+    job2 = Job("linkedin", "2", "", "", "", "u", easy_apply=False)
+    assert site.open(job2).detail == "no Easy Apply button"
+    cfg.search.include_external_jobs = True
+    job3 = Job("linkedin", "3", "", "", "", "u", easy_apply=False)
+    assert site.open(job3) is None and job3.external
+
+
+def test_rate_limit_backs_off_then_stops(context, cfg, monkeypatch):
+    import pytest
+    from jobbot.sites.base import SiteStop
+    calls = []
+    site = LinkedIn(context, cfg, None, Prompter("auto"))
+    monkeypatch.setattr(site, "_fetch_public", lambda url: calls.append(url) or (429, ""))
+    with pytest.raises(SiteStop, match="limiting requests"):
+        site.open(Job("linkedin", "1", "", "", "", "u"))
+    assert len(calls) == 2                          # one retry after backing off
+
+
+def test_logged_in_pages_are_capped_per_run(context, cfg, monkeypatch):
+    from jobbot.sites import linkedin as li
+    monkeypatch.setattr(li, "MAX_LOGGED_IN_PAGES", 1)
+    site = linkedin(context, cfg)
+    assert site.apply(JOB).status == Status.APPLIED
+    second = site.apply(Job("linkedin", "124", "PM", "Acme", "", "https://www.linkedin.com/jobs/view/124/"))
+    assert second.status == Status.FAILED and "limit" in second.detail
 
 
 LOGGED_OUT_JOB = """
@@ -379,10 +273,10 @@ def test_logged_out_page_stops_the_run(context, cfg):
     site = LinkedIn(context, cfg, None, Prompter("auto"))
     job = Job("linkedin", "1", "Senior Manager", "Talkdesk", "", "https://www.linkedin.com/jobs/view/1/")
     with pytest.raises(SiteLoggedOut, match="login linkedin"):
-        site.open(job)
+        site.apply(job)
 
 
-def test_feed_is_fetched_without_browser_cookies(context, cfg, monkeypatch):
+def test_public_fetch_sends_no_cookies(monkeypatch):
     from jobbot.sites import linkedin as li
     seen = {}
 
@@ -397,5 +291,22 @@ def test_feed_is_fetched_without_browser_cookies(context, cfg, monkeypatch):
         return FakeResp()
 
     monkeypatch.setattr(li.urllib.request, "urlopen", fake_urlopen)
-    assert LinkedIn._fetch_listing("https://www.linkedin.com/jobs-guest/x") == (200, "")
+    assert LinkedIn._fetch_public("https://www.linkedin.com/jobs-guest/x") == (200, "")
     assert "Cookie" not in seen["headers"] and "User-agent" in seen["headers"]
+
+
+def test_non_remote_jobs_skipped_before_ai(cfg, tmp_path):
+    from types import SimpleNamespace
+    from jobbot.runner import Runner
+    cfg.database = str(tmp_path / "t.db")
+    cfg.search.remote = True
+    runner = Runner(cfg, "dry-run")
+    runner.ai = SimpleNamespace(score_fit=lambda job: (_ for _ in ()).throw(AssertionError("no AI call")))
+
+    def open_job(job):
+        job.workplace, job.description = "Hybrid", "x" * 500
+
+    site = SimpleNamespace(open=open_job)
+    job = Job("linkedin", "1", "IT Manager", "Acme", "", "u")
+    result = runner._process(site, job)
+    assert (result.status, result.detail) == (Status.SKIPPED, "listed as Hybrid, not remote")

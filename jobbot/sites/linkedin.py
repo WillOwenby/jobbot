@@ -1,13 +1,20 @@
-"""LinkedIn Easy Apply.
+"""LinkedIn.
+
+Account safety: searching and reading job descriptions use LinkedIn's public,
+logged-out pages, fetched without your cookies, so a dry run never touches your
+account. The logged-in browser is only used to apply, a limited number of times
+per run, with long pauses in between.
 
 LinkedIn changes its markup often. When something stops working, the selectors
-below are the first place to look: open DevTools on the page and update them.
+below are the first place to look.
 """
 from __future__ import annotations
 
 import html
 import logging
+import random
 import re
+import time
 import urllib.error
 import urllib.request
 from typing import Iterator
@@ -17,95 +24,24 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from ..models import ApplyResult, Job, Status
-from .base import MAX_FORM_STEPS, JobSite, SiteLoggedOut, text_of
+from .base import MAX_FORM_STEPS, JobSite, SiteLoggedOut, SiteStop
 
 log = logging.getLogger(__name__)
 
-SEARCH_URL = "https://www.linkedin.com/jobs/search/"
-# The plain job-listing feed LinkedIn serves to logged-out visitors. Its card
-# format has been stable for years, unlike the logged-in results page.
+# Public (logged-out) endpoints. Their HTML has been stable for years.
 LISTING_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+POSTING_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
 LISTING_PAGE_SIZE = 10
+PAGE_SIZE = 25
 FEED_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/141.0 Safari/537.36")
-PAGE_SIZE = 25
+PUBLIC_DELAY = (3.0, 7.0)      # seconds between public requests
+RATE_LIMIT_WAIT = 120          # seconds to back off after a "too many requests" answer
 
-# Job cards are found through their links, which LinkedIn can't change without
-# breaking its own URLs, rather than through card markup, which changes often.
-JOB_LINK = "a[href*='/jobs/view/'], a[href*='currentJobId='], [data-job-id], [data-occludable-job-id]"
+# Limits on the logged-in browser, whatever the config says.
+MAX_LOGGED_IN_PAGES = 12       # job pages per run
+MIN_LOGGED_IN_GAP = 45         # seconds between logged-in job pages (plus up to 45 random)
 
-COLLECT_JOBS_JS = r"""
-() => {
-  const jobs = new Map();
-  for (const a of document.querySelectorAll("a[href*='/jobs/view/'], a[href*='currentJobId=']")) {
-    const m = a.href.match(/\/jobs\/view\/(?:[^\/?]*?-)?(\d{6,})/) || a.href.match(/currentJobId=(\d{6,})/);
-    if (!m || jobs.has(m[1])) continue;
-    const card = a.closest('li, [data-job-id], [data-occludable-job-id], .job-card-container') || a.parentElement;
-    const lines = (card.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
-    const visible = a.querySelector('[aria-hidden="true"], strong') || a;
-    const title = ((visible.innerText || '').split('\n')[0] || a.getAttribute('aria-label') || lines[0] || '').trim();
-    jobs.set(m[1], {id: m[1], title, lines});
-  }
-  // Cards that carry the job id as an attribute instead of a direct link.
-  for (const card of document.querySelectorAll('[data-job-id], [data-occludable-job-id]')) {
-    const id = card.getAttribute('data-job-id') || card.getAttribute('data-occludable-job-id');
-    if (!/^\d{6,}$/.test(id || '') || jobs.has(id)) continue;
-    const lines = (card.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
-    const heading = card.querySelector('h3, strong, [class*="title"]');
-    const title = ((heading && heading.innerText) || lines[0] || '').split('\n')[0].trim();
-    jobs.set(id, {id, title, lines});
-  }
-  return [...jobs.values()];
-}
-"""
-
-SCROLL_RESULTS_JS = r"""
-() => {
-  // Scroll the results list (or the window) one screen down so more cards render.
-  let el = document.querySelector("a[href*='/jobs/view/'], a[href*='currentJobId=']");
-  while (el && el !== document.body) {
-    const style = getComputedStyle(el);
-    if (el.scrollHeight > el.clientHeight + 20 && /(auto|scroll)/.test(style.overflowY)) {
-      const before = el.scrollTop;
-      el.scrollTop += el.clientHeight;
-      return el.scrollTop > before;
-    }
-    el = el.parentElement;
-  }
-  const before = window.scrollY;
-  window.scrollBy(0, window.innerHeight);
-  return window.scrollY > before;
-}
-"""
-
-CARD_NOISE = re.compile(
-    r"^(promoted|easy apply|viewed|applied|actively (reviewing|recruiting).*|be an early applicant|"
-    r"\d+ (applicants?|connections?).*|.*\bago|with verification|new|dismiss.*|save|"
-    r"\$[\d,.]+k?.*|.*school alum.*|.*works? here)$",
-    re.I,
-)
-
-DESCRIPTION = ("[componentkey^='JobDetails_AboutTheJob_'], #job-details, "
-               ".show-more-less-html__markup, .description__text, .jobs-description__content, .jobs-description-content__text, "
-               ".jobs-box__html-content, [class*='jobs-description'], article")
-MIN_DESCRIPTION = 200  # characters; less than this is a placeholder, not a posting
-# Text of the longest element matching a selector (several can match while the page loads).
-BEST_TEXT_JS = """
-sel => [...document.querySelectorAll(sel)].map(e => e.innerText || '')
-                                          .reduce((a, b) => (b.length > a.length ? b : a), '')
-"""
-# Ready when the text has arrived, or when a "more" button shows there's more to reveal.
-DESCRIPTION_READY_JS = f"""
-([sel, min, more]) => ({BEST_TEXT_JS.strip()})(sel).length > min || !!document.querySelector(more)
-"""
-# The job's workplace tag ("Remote" / "Hybrid" / "On-site") is a short link on its own page.
-WORKPLACE_JS = r"""
-() => [...document.querySelectorAll("a[href*='/jobs/view/']")]
-        .map(a => (a.innerText || '').trim())
-        .find(t => /^(remote|hybrid|on-site|onsite)$/i.test(t)) || ''
-"""
-EXPAND_DESCRIPTION = "[data-testid='expandable-text-button'], button[aria-label*='see more' i]"
-TOP_CARD_COMPANY = ".job-details-jobs-unified-top-card__company-name, a[href*='/company/']"
 EASY_APPLY_BUTTON = ("button.jobs-apply-button:has-text('Easy Apply'), button[aria-label*='Easy Apply'], "
                      "a[aria-label*='Easy Apply'], button:has-text('Easy Apply'), a:has-text('Easy Apply')")
 ALREADY_APPLIED = "text=/Applied\\s+\\d+\\s+\\w+\\s+ago/i"
@@ -136,6 +72,12 @@ class LinkedIn(JobSite):
         self.page.wait_for_load_state("domcontentloaded")
         return "/feed" in self.page.url
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_public = 0.0
+        self._last_logged_in = 0.0
+        self._logged_in_pages = 0
+
     def search(self, query: str, location: str) -> Iterator[Job]:
         s = self.cfg.search
         if s.remote and "remote" not in query.lower():
@@ -149,19 +91,25 @@ class LinkedIn(JobSite):
         }
         if s.remote:
             params["f_WT"] = "2"
-        if not s.include_external_jobs:
-            params["f_AL"] = "true"  # Easy Apply only
-        try:
-            yield from self._search_listing(params)
-        except ListingUnavailable as e:
-            log.info("    listing feed unavailable (%s); reading the results page instead", e)
-            yield from self._search_page(params)
+        # The public job page doesn't show Easy Apply, so search with the Easy Apply filter
+        # first and, if company-site jobs are wanted too, again without it.
+        seen: set[str] = set()
+        for easy_apply in ([True, False] if s.include_external_jobs else [True]):
+            pass_params = {**params, "f_AL": "true"} if easy_apply else params
+            try:
+                for job in self._search_listing(pass_params):
+                    if job.job_id not in seen:
+                        seen.add(job.job_id)
+                        job.easy_apply = easy_apply
+                        yield job
+            except ListingUnavailable as e:
+                log.info("    listing feed unavailable (%s); skipping this search", e)
 
     def _search_listing(self, params: dict) -> Iterator[Job]:
         seen: set[str] = set()
         for start in range(0, self.cfg.search.max_pages * PAGE_SIZE, LISTING_PAGE_SIZE):
             try:
-                status, body = self._fetch_listing(f"{LISTING_URL}?{urlencode({**params, 'start': start})}")
+                status, body = self._public_get(f"{LISTING_URL}?{urlencode({**params, 'start': start})}")
             except OSError as e:
                 if seen:
                     return
@@ -177,12 +125,27 @@ class LinkedIn(JobSite):
                 return
             seen.update(j.job_id for j in jobs)
             yield from jobs
-            self.page.wait_for_timeout(1000)
+
+    def _public_get(self, url: str) -> tuple[int, str]:
+        """GET a public LinkedIn page at a polite pace, backing off once if rate-limited."""
+        for attempt in range(2):
+            wait = random.uniform(*PUBLIC_DELAY) - (time.monotonic() - self._last_public)
+            if wait > 0:
+                time.sleep(wait)
+            status, body = self._fetch_public(url)
+            self._last_public = time.monotonic()
+            if status != 429:
+                return status, body
+            if attempt == 0:
+                log.warning("    LinkedIn says too many requests; waiting %ds", RATE_LIMIT_WAIT)
+                time.sleep(RATE_LIMIT_WAIT)
+        raise LinkedInRateLimited("LinkedIn is limiting requests from this connection. "
+                                  "Stopped; try again in a few hours")
 
     @staticmethod
-    def _fetch_listing(url: str) -> tuple[int, str]:
-        """Fetch the public feed WITHOUT the browser's cookies, so hundreds of search requests
-        aren't tied to the logged-in account (LinkedIn may end a session that does that)."""
+    def _fetch_public(url: str) -> tuple[int, str]:
+        """Fetch a public page WITHOUT the browser's cookies, so searching and reading jobs
+        never involve the logged-in account."""
         req = urllib.request.Request(url, headers={"User-Agent": FEED_USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -190,85 +153,49 @@ class LinkedIn(JobSite):
         except urllib.error.HTTPError as e:
             return e.code, ""
 
-    def _search_page(self, params: dict) -> Iterator[Job]:
-        seen: set[str] = set()
-        for page_num in range(self.cfg.search.max_pages):
-            params["start"] = page_num * PAGE_SIZE
-            self.goto(f"{SEARCH_URL}?{urlencode(params)}")
-            try:
-                self.page.locator(JOB_LINK).first.wait_for(timeout=15000)
-            except PlaywrightTimeout:
-                log.info("    no jobs found on results page %d", page_num + 1)
-                self.save_debug("search-no-jobs")
-                return
-            # Collect the whole page before yielding: applying navigates away.
-            jobs = [j for j in self._collect_jobs() if j.job_id not in seen]
-            log.info("    results page %d: %d new jobs", page_num + 1, len(jobs))
-            if self.debug:
-                self.save_debug("search-results")
-            if not jobs:
-                return
-            seen.update(j.job_id for j in jobs)
-            yield from jobs
-
-    def _collect_jobs(self) -> list[Job]:
-        for _ in range(12):  # cards render lazily as the list scrolls
-            if not self.page.evaluate(SCROLL_RESULTS_JS):
-                break
-            self.page.wait_for_timeout(400)
-        jobs = []
-        for raw in self.page.evaluate(COLLECT_JOBS_JS):
-            title = clean_title(raw["title"])
-            company, location = parse_card_lines(title, raw["lines"])
-            if title:
-                jobs.append(Job(
-                    site=self.name, job_id=raw["id"], title=title, company=company,
-                    location=location, url=f"https://www.linkedin.com/jobs/view/{raw['id']}/",
-                ))
-        return jobs
-
     def open(self, job: Job) -> ApplyResult | None:
+        """Read the job from its public page; no logged-in browser involved."""
+        status, body = self._public_get(POSTING_URL.format(job_id=job.job_id))
+        if status == 404:
+            return ApplyResult(Status.SKIPPED, "job is no longer listed")
+        if status != 200:
+            return ApplyResult(Status.FAILED, f"couldn't load the public job page (HTTP {status})")
+        posting = parse_posting(body)
+        job.description = posting["description"]
+        job.title = job.title or posting["title"]
+        job.company = job.company or posting["company"]
+        job.location = job.location or posting["location"]
+        log.debug("    description: %d chars", len(job.description))
+        if job.easy_apply is False:
+            if not self.cfg.search.include_external_jobs:
+                return ApplyResult(Status.SKIPPED, "no Easy Apply button")
+            job.external = True  # still worth scoring; you'd apply on the company site
+        return None
+
+    def _open_logged_in(self, job: Job) -> ApplyResult | None:
+        """Open the job in the logged-in browser, only to apply, within the per-run limits."""
+        if self._logged_in_pages >= MAX_LOGGED_IN_PAGES:
+            return ApplyResult(Status.FAILED, "logged-in page limit for this run reached; try next run")
+        gap = MIN_LOGGED_IN_GAP + random.uniform(0, MIN_LOGGED_IN_GAP)
+        wait = gap - (time.monotonic() - self._last_logged_in)
+        if self._last_logged_in and wait > 0:
+            log.info("    pausing %ds before opening LinkedIn", wait)
+            time.sleep(wait)
+        self._logged_in_pages += 1
+        self._last_logged_in = time.monotonic()
         self.goto(job.url)
         if self._looks_logged_out():
             self.save_debug("logged-out")
             raise SiteLoggedOut("LinkedIn is showing the logged-out page. Run "
                                 "'python -m jobbot login linkedin', log in again, then rerun")
         try:
-            # The description box renders before its text arrives; wait for real content.
-            self.page.wait_for_function(DESCRIPTION_READY_JS,
-                                        arg=[DESCRIPTION, MIN_DESCRIPTION, EXPAND_DESCRIPTION], timeout=15000)
-            expand = self.page.locator(f"[componentkey^='JobDetails_AboutTheJob_'] :is({EXPAND_DESCRIPTION})").first
-            if not expand.count():
-                expand = self.page.locator(EXPAND_DESCRIPTION).first
-            if expand.count():
-                try:
-                    expand.click(timeout=3000)  # the description is truncated behind "more"
-                    self.page.wait_for_timeout(500)
-                except PlaywrightError:
-                    pass
-            job.description = self.page.evaluate(BEST_TEXT_JS, DESCRIPTION)
+            ready = self.page.locator(EASY_APPLY_BUTTON).or_(self.page.locator(ALREADY_APPLIED))
+            ready.first.wait_for(timeout=15000)
         except PlaywrightTimeout:
-            log.info("    couldn't find the job description; using the whole page text")
-            self.save_debug("job-no-description")
-            main = self.page.locator("main")
-            job.description = (main.first if main.count() else self.page.locator("body")).inner_text()
-        log.debug("    description: %d chars", len(job.description))
-        job.workplace = self.page.evaluate(WORKPLACE_JS)
-        if self.debug:
-            self.save_debug("job-page")
-        # The page title is "Job title | Company | LinkedIn" on every layout so far.
-        parts = [x.strip() for x in self.page.title().split("|")]
-        if len(parts) >= 3 and parts[-1] == "LinkedIn":
-            job.title = job.title or parts[0]
-            job.company = job.company or parts[1]
-        if not job.company:
-            job.company = text_of(self.page, TOP_CARD_COMPANY)
+            pass
         if self.page.locator(ALREADY_APPLIED).count():
             return ApplyResult(Status.ALREADY_APPLIED)
         if not self.page.locator(EASY_APPLY_BUTTON).count():
-            if self.cfg.search.include_external_jobs:
-                job.external = True  # still worth scoring; you'd apply on the company site
-                return None
             self.save_debug("job-no-easy-apply")
             return ApplyResult(Status.SKIPPED, "no Easy Apply button")
         return None
@@ -280,6 +207,8 @@ class LinkedIn(JobSite):
 
     def apply(self, job: Job) -> ApplyResult:
         try:
+            if early := self._open_logged_in(job):
+                return early
             return self._apply(job)
         except PlaywrightError as e:
             log.exception("LinkedIn apply failed")
@@ -344,22 +273,11 @@ class LinkedIn(JobSite):
             pass
 
 
-def clean_title(title: str) -> str:
-    """Drop LinkedIn's screen-reader extras, e.g. "Title Title with verification" -> "Title"."""
-    title = re.sub(r"\s*with verification\s*$", "", title.strip(), flags=re.I)
-    m = re.fullmatch(r"(.+?)\s*\1", title)
-    return m.group(1) if m else title
-
-
-def parse_card_lines(title: str, lines: list[str]) -> tuple[str, str]:
-    """Pick company and location out of a result card's text lines."""
-    rest = [ln for ln in lines if ln != title and not CARD_NOISE.match(ln) and title not in ln]
-    company = rest[0] if rest else ""
-    location = rest[1] if len(rest) > 1 else ""
-    return company, location
-
-
 class ListingUnavailable(Exception):
+    pass
+
+
+class LinkedInRateLimited(SiteStop):
     pass
 
 
@@ -390,3 +308,23 @@ def parse_listing(text: str) -> list[Job]:
                 url=f"https://www.linkedin.com/jobs/view/{m.group(1)}/",
             ))
     return jobs
+
+
+def parse_posting(text: str) -> dict:
+    """Parse a public job page into title, company, location and description."""
+    def first(cls: str, tag: str = r"\w+") -> str:
+        m = re.search(rf'class="[^"]*\b{cls}\b[^"]*"[^>]*>(.*?)</{tag}>', text, re.S)
+        return _strip_tags(m.group(1)) if m else ""
+    desc = re.search(r'class="[^"]*show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>', text, re.S)
+    description = ""
+    if desc:
+        block = re.sub(r"<br\s*/?>|</(p|li|ul|ol|h\d)>", "\n", desc.group(1))
+        description = "\n".join(
+            line for line in (re.sub(r"[ \t]+", " ", html.unescape(re.sub(r"<[^>]+>", " ", ln))).strip()
+                              for ln in block.split("\n")) if line)
+    return {
+        "title": first("top-card-layout__title"),
+        "company": first("topcard__org-name-link", "a"),
+        "location": first("topcard__flavor--bullet", "span"),
+        "description": description,
+    }

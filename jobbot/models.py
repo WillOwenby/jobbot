@@ -18,6 +18,7 @@ class Job:
     concerns: list[str] = field(default_factory=list)
     workplace: str = ""  # "Remote", "Hybrid" or "On-site" when the site says so
     external: bool = False  # applies on the company's own site, so jobbot can't apply
+    easy_apply: bool | None = None  # from which search it came; None = unknown
 
     @property
     def key(self) -> str:

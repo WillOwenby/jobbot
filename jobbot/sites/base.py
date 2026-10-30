@@ -19,7 +19,11 @@ log = logging.getLogger(__name__)
 MAX_FORM_STEPS = 15
 
 
-class SiteLoggedOut(RuntimeError):
+class SiteStop(RuntimeError):
+    """Stop working on this site for the rest of the run."""
+
+
+class SiteLoggedOut(SiteStop):
     """The site logged us out mid-run; every following job would be misjudged."""
 
 

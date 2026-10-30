@@ -11,6 +11,19 @@ A personal job-application bot, in the spirit of AIApply, that runs on your own 
 
 > ⚠️ **Read this first.** LinkedIn's and Indeed's Terms of Service prohibit automated applying. People use tools like this, but your account can be restricted or banned. jobbot keeps the risk lower by using a real, visible browser that you log into yourself, applying slowly with random delays, capping applications per run, and, in `review` mode (the default), asking you before every submit. It doesn't try to evade the sites' bot detection. Use it at your own risk.
 
+## Protecting your LinkedIn account
+
+LinkedIn flags accounts that load many pages quickly. jobbot keeps your account out of
+everything except applying:
+
+- **Searching and reading jobs** use LinkedIn's public, logged-out pages, fetched without
+  your cookies and at a few seconds per request. A `dry-run` never uses your login at all.
+- **Applying** (review/auto mode) opens the job in your logged-in browser: at most
+  12 job pages per run, 45–90 seconds apart.
+- If LinkedIn shows a logged-out page, or says "too many requests", jobbot stops the run.
+
+Keep runs modest: once a day, with `posted_within_days: 1` once you've caught up.
+
 ## Setup
 
 ```bash

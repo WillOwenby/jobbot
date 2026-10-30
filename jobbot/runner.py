@@ -52,7 +52,8 @@ class Runner:
             for name in sites:
                 site = SITES[name](context, self.cfg, self.filler, self.prompter)
                 site.debug = self.debug
-                site.ensure_logged_in()
+                if self.mode != "dry-run":  # dry runs only read public pages
+                    site.ensure_logged_in()
                 self._run_site(site)
         return self.stats
 
