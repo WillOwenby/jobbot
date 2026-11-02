@@ -61,31 +61,40 @@ class Runner:
 
     def _run_site(self, site: JobSite) -> None:
         applied = 0
-        for query in self.cfg.search.keywords:
-            for location in self.cfg.search.locations:
-                log.info("[%s] searching '%s' in '%s'", site.name, query, location or "anywhere")
-                for job in site.search(query, location):
-                    if applied >= self.limit:
-                        log.info("[%s] reached limit of %d applications", site.name, self.limit)
-                        return
-                    if self.tracker.is_done(job, self.recheck, dry_run=self.mode == "dry-run"):
-                        continue
-                    # The same job often turns up in several searches (or as several listings).
-                    same = (job.title.strip().lower(), job.company.strip().lower())
-                    if job.key in self._seen or (all(same) and same in self._seen):
-                        continue
-                    self._seen.update({job.key, same})
-                    try:
-                        result = self._process(site, job)
-                    except PlaywrightError as e:
-                        # One broken page shouldn't end the run.
-                        result = ApplyResult(Status.FAILED, f"browser error: {str(e).splitlines()[0]}")
-                    self._log(job, result)
-                    if result.status in (Status.APPLIED, Status.DRY_RUN):
-                        applied += 1
-                    if result.status not in (Status.SKIPPED, Status.ALREADY_APPLIED):
-                        time.sleep(random.uniform(self.cfg.limits.min_delay_seconds,
-                                                  self.cfg.limits.max_delay_seconds))
+        searches = [(q, loc) for q in self.cfg.search.keywords for loc in self.cfg.search.locations]
+        # Start where the last run stopped, so a run cut short (e.g. rate-limited) doesn't
+        # leave the later searches untried while the first ones get repeated.
+        state_key = f"next_search:{site.name}"
+        start = int(self.tracker.get_state(state_key, "0") or 0) % max(len(searches), 1)
+        for i in range(len(searches)):
+            index = (start + i) % len(searches)
+            query, location = searches[index]
+            self.tracker.set_state(state_key, str(index))  # resume here if this run stops mid-search
+            log.info("[%s] search %d of %d: '%s' in '%s'", site.name, index + 1, len(searches),
+                     query, location or "anywhere")
+            for job in site.search(query, location):
+                if applied >= self.limit:
+                    log.info("[%s] reached limit of %d applications", site.name, self.limit)
+                    return
+                if self.tracker.is_done(job, self.recheck, dry_run=self.mode == "dry-run"):
+                    continue
+                # The same job often turns up in several searches (or as several listings).
+                same = (job.title.strip().lower(), job.company.strip().lower())
+                if job.key in self._seen or (all(same) and same in self._seen):
+                    continue
+                self._seen.update({job.key, same})
+                try:
+                    result = self._process(site, job)
+                except PlaywrightError as e:
+                    # One broken page shouldn't end the run.
+                    result = ApplyResult(Status.FAILED, f"browser error: {str(e).splitlines()[0]}")
+                self._log(job, result)
+                if result.status in (Status.APPLIED, Status.DRY_RUN):
+                    applied += 1
+                if self.mode != "dry-run" and result.status not in (Status.SKIPPED, Status.ALREADY_APPLIED):
+                    time.sleep(random.uniform(self.cfg.limits.min_delay_seconds,
+                                              self.cfg.limits.max_delay_seconds))
+            self.tracker.set_state(state_key, str((index + 1) % len(searches)))
 
     def _process(self, site: JobSite, job: Job) -> ApplyResult:
         if reason := reject_reason(job, self.cfg.filters):

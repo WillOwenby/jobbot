@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE TABLE IF NOT EXISTS ai_answers (
     question TEXT PRIMARY KEY, answer TEXT, created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS state (
+    name TEXT PRIMARY KEY, value TEXT
+);
 """
 
 DONE = (Status.APPLIED.value, Status.ALREADY_APPLIED.value)
@@ -31,6 +34,14 @@ class Tracker:
     def __init__(self, path: str):
         self.conn = sqlite3.connect(path)
         self.conn.executescript(SCHEMA)
+
+    def get_state(self, name: str, default: str = "") -> str:
+        row = self.conn.execute("SELECT value FROM state WHERE name = ?", (name,)).fetchone()
+        return row[0] if row else default
+
+    def set_state(self, name: str, value: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO state VALUES (?, ?)", (name, value))
+        self.conn.commit()
 
     def is_done(self, job: Job, recheck: bool = False, dry_run: bool = False) -> bool:
         row = self.conn.execute("SELECT status, detail FROM applications WHERE key = ?", (job.key,)).fetchone()

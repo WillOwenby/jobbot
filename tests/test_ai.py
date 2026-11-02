@@ -337,3 +337,39 @@ def test_dry_run_does_not_rescore_earlier_matches(cfg, tmp_path):
     t.record(job, ApplyResult(Status.DRY_RUN, "would apply"))
     assert t.is_done(job, dry_run=True)
     assert not t.is_done(job)                          # a real run still applies to it
+
+
+def _rotation_runner(cfg, tmp_path, searched, stop_on=None):
+    from jobbot.runner import Runner
+    from jobbot.sites.base import SiteStop
+    cfg.database = str(tmp_path / "t.db")
+    cfg.search.keywords, cfg.search.locations = ["a", "b", "c"], ["US"]
+    runner = Runner(cfg, "dry-run")
+
+    def search(q, loc):
+        searched.append(q)
+        if q == stop_on:
+            raise SiteStop("rate limited")
+        return iter([])
+
+    return runner, SimpleNamespace(name="linkedin", search=search)
+
+
+def test_next_run_resumes_at_the_search_that_was_cut_short(cfg, tmp_path):
+    import pytest
+    from jobbot.sites.base import SiteStop
+    searched = []
+    runner, site = _rotation_runner(cfg, tmp_path, searched, stop_on="b")
+    with pytest.raises(SiteStop):
+        runner._run_site(site)
+    assert searched == ["a", "b"]
+
+    searched.clear()
+    runner, site = _rotation_runner(cfg, tmp_path, searched)
+    runner._run_site(site)
+    assert searched == ["b", "c", "a"]          # starts with the interrupted search, then wraps
+
+    searched.clear()
+    runner, site = _rotation_runner(cfg, tmp_path, searched)
+    runner._run_site(site)
+    assert searched == ["b", "c", "a"]          # a full pass ends where it began
