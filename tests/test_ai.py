@@ -291,3 +291,49 @@ def test_shortlist_exports(cfg, tmp_path, monkeypatch, capsys):
     rows = list(csv.reader(open(sheet, encoding="utf-8-sig")))
     assert rows[0][:6] == ["Fit", "Title", "Company", "Location", "Apply via", "Link"]
     assert rows[1][0] == "72" and rows[1][5] == "https://www.linkedin.com/jobs/view/42/"
+
+
+def test_experience_file_reaches_claude(cfg, tmp_path):
+    msgs = FakeMessages(parsed=FitScore(score=70, reason="", hard_exclusion="", concerns=[]))
+    client = SimpleNamespace(beta=SimpleNamespace(messages=msgs))
+    ai = ResumeAI(AIConfig(enabled=True), cfg.profile, "resume", client=client,
+                  experience_text="Tableau dashboards\nMicrosoft Azure")
+    ai.score_fit(JOB)
+    system = msgs.calls[0]["system"][0]["text"]
+    assert "<more_experience>" in system and "Tableau dashboards" in system and "Microsoft Azure" in system
+
+
+def test_build_ai_reads_experience_file(cfg, tmp_path, monkeypatch):
+    from jobbot import runner as runner_mod
+    exp = tmp_path / "experience.txt"
+    exp.write_text("ServiceNow API integrations\n", encoding="utf-8")
+    cfg.ai = AIConfig(enabled=True, experience_file=str(exp))
+    captured = {}
+    monkeypatch.setattr("jobbot.ai.ResumeAI.__init__",
+                        lambda self, *a, **kw: captured.update(kw) or None)
+    runner_mod.build_ai(cfg)
+    assert "ServiceNow API integrations" in captured["experience_text"]
+
+
+def test_same_job_handled_once_per_run(cfg, tmp_path):
+    from jobbot.runner import Runner
+    cfg.database = str(tmp_path / "t.db")
+    cfg.search.keywords, cfg.search.locations = ["a", "b"], ["United States"]
+    runner = Runner(cfg, "dry-run")
+    processed = []
+    runner._process = lambda site, job: processed.append(job.key) or __import__("jobbot.models").models.ApplyResult(
+        __import__("jobbot.models").models.Status.SKIPPED, "x")
+    same_listing = lambda: [Job("linkedin", "1", "RCM Manager", "NeoGenomics", "", "u"),
+                            Job("linkedin", "2", "RCM Manager", "NeoGenomics", "", "u")]   # second city listing
+    site = SimpleNamespace(name="linkedin", search=lambda q, loc: iter(same_listing()))
+    runner._run_site(site)
+    assert processed == ["linkedin:1"]                 # once, despite 2 searches and 2 listings
+
+
+def test_dry_run_does_not_rescore_earlier_matches(cfg, tmp_path):
+    from jobbot.models import ApplyResult, Status
+    t = Tracker(str(tmp_path / "t.db"))
+    job = Job(**{**JOB.__dict__, "concerns": []})
+    t.record(job, ApplyResult(Status.DRY_RUN, "would apply"))
+    assert t.is_done(job, dry_run=True)
+    assert not t.is_done(job)                          # a real run still applies to it

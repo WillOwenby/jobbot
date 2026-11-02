@@ -32,7 +32,7 @@ class Tracker:
         self.conn = sqlite3.connect(path)
         self.conn.executescript(SCHEMA)
 
-    def is_done(self, job: Job, recheck: bool = False) -> bool:
+    def is_done(self, job: Job, recheck: bool = False, dry_run: bool = False) -> bool:
         row = self.conn.execute("SELECT status, detail FROM applications WHERE key = ?", (job.key,)).fetchone()
         if not row:
             return False
@@ -41,6 +41,8 @@ class Tracker:
             return False  # flagged only because scoring failed (older versions); score it now
         if status == Status.SKIPPED.value and detail in RETRY_SKIPS:
             return False
+        if dry_run and not recheck and status == Status.DRY_RUN.value:
+            return True  # already a dry-run match; a real run will still pick it up
         return status in (DONE if recheck else JUDGED)
 
     def judged_duplicate(self, job: Job) -> sqlite3.Row | None:

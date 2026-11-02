@@ -61,6 +61,7 @@ class AIConfig:
     answer_questions: bool = True
     cover_letters: bool = True
     cover_letter_example: str = ""
+    experience_file: str = ""  # optional .txt/.md/.docx/.pdf with more detail than the resume
     about_me: str = ""
     job_criteria: str = ""
 
@@ -152,6 +153,7 @@ def load_config(path: str | Path) -> Config:
     cfg.database = resolve(cfg.database)
     cfg.output_dir = resolve(cfg.output_dir)
     cfg.ai.cover_letter_example = resolve(cfg.ai.cover_letter_example)
+    cfg.ai.experience_file = resolve(cfg.ai.experience_file)
     if not Path(cfg.profile.resume_path).is_file():
         raise ValueError(f"resume not found: {cfg.profile.resume_path}")
     return cfg

@@ -34,6 +34,12 @@ Notes from the candidate (preferences, work authorization, salary, etc.):
 <resume>
 {resume}
 </resume>
+
+<more_experience>
+The candidate's own fuller account of their experience, beyond what fits on the resume.
+Treat it as true and use it alongside the resume.
+{more_experience}
+</more_experience>
 """
 
 
@@ -81,7 +87,7 @@ def read_document_text(path: str) -> str:
 
 class ResumeAI:
     def __init__(self, cfg: AIConfig, profile: ProfileConfig, resume_text: str, client=None,
-                 example_letter: str = ""):
+                 example_letter: str = "", experience_text: str = ""):
         self.cfg = cfg
         self.example_letter = example_letter.strip()
         system = SYSTEM_PROMPT.format(
@@ -89,6 +95,7 @@ class ResumeAI:
             phone=profile.phone, city=profile.city or "(not given)",
             linkedin=profile.linkedin_url or "(not given)", website=profile.website or "(not given)",
             about_me=cfg.about_me.strip() or "(none)", resume=resume_text.strip(),
+            more_experience=experience_text.strip() or "(none)",
         )
         # The resume is the same on every call, so cache it.
         self.system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]

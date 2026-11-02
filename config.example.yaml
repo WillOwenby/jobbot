@@ -62,6 +62,7 @@ ai:
   min_fit_score: 60            # skip jobs Claude scores below this (0-100)
   answer_questions: true
   cover_letters: true          # writes a tailored PDF per job into output/
+  experience_file: ""          # optional text file with more experience than the resume shows
   about_me: |
     Anything the AI should know that isn't on your resume:
     - US citizen, no sponsorship needed

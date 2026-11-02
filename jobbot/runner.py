@@ -27,8 +27,9 @@ def build_ai(cfg: Config):
         return None
     from .ai import ResumeAI, read_document_text
     example = read_document_text(cfg.ai.cover_letter_example) if cfg.ai.cover_letter_example else ""
+    experience = read_document_text(cfg.ai.experience_file) if cfg.ai.experience_file else ""
     return ResumeAI(cfg.ai, cfg.profile, read_document_text(cfg.profile.resume_path),
-                    example_letter=example)
+                    example_letter=example, experience_text=experience)
 
 
 class Runner:
@@ -46,6 +47,7 @@ class Runner:
         self.filler = FormFiller(self.answerer, cfg.profile)
         self.prompter = Prompter(mode)
         self.stats: Counter[str] = Counter()
+        self._seen: set = set()  # jobs handled this run, by key and by (title, company)
 
     def run(self, sites: list[str]) -> Counter:
         with open_browser(self.cfg.browser) as context:
@@ -66,8 +68,13 @@ class Runner:
                     if applied >= self.limit:
                         log.info("[%s] reached limit of %d applications", site.name, self.limit)
                         return
-                    if self.tracker.is_done(job, self.recheck):
+                    if self.tracker.is_done(job, self.recheck, dry_run=self.mode == "dry-run"):
                         continue
+                    # The same job often turns up in several searches (or as several listings).
+                    same = (job.title.strip().lower(), job.company.strip().lower())
+                    if job.key in self._seen or (all(same) and same in self._seen):
+                        continue
+                    self._seen.update({job.key, same})
                     try:
                         result = self._process(site, job)
                     except PlaywrightError as e:
