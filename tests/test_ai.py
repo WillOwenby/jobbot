@@ -271,3 +271,23 @@ def test_shortlist_includes_easy_apply_dry_run_matches(cfg, tmp_path):
     t.record(Job(**{**JOB.__dict__, "job_id": "2", "fit_score": 80, "concerns": []}), ApplyResult(Status.APPLY_YOURSELF))
     t.record(Job(**{**JOB.__dict__, "job_id": "3", "fit_score": 20, "concerns": []}), ApplyResult(Status.SKIPPED))
     assert [r["job_id"] for r in t.shortlist()] == ["2", "1"]
+
+
+def test_shortlist_exports(cfg, tmp_path, monkeypatch, capsys):
+    import csv
+    from jobbot import __main__ as cli
+    from jobbot.models import ApplyResult, Status
+    cfg.database = str(tmp_path / "t.db")
+    t = Tracker(cfg.database)
+    job = Job(**{**JOB.__dict__, "title": "Director <Epic> & RCM", "url": "https://www.linkedin.com/jobs/view/42/",
+                 "concerns": ["salary not listed"], "fit_score": 72, "fit_reason": "Strong fit"})
+    t.record(job, ApplyResult(Status.DRY_RUN, "would apply"))
+    monkeypatch.setattr(cli, "load_config", lambda path: cfg)
+    page, sheet = tmp_path / "s.html", tmp_path / "s.csv"
+    assert cli.main(["shortlist", "--html", str(page), "--csv", str(sheet)]) == 0
+    text = page.read_text(encoding="utf-8")
+    assert 'href="https://www.linkedin.com/jobs/view/42/"' in text
+    assert "Director &lt;Epic&gt; &amp; RCM" in text and "Easy Apply" in text and "salary not listed" in text
+    rows = list(csv.reader(open(sheet, encoding="utf-8-sig")))
+    assert rows[0][:6] == ["Fit", "Title", "Company", "Location", "Apply via", "Link"]
+    assert rows[1][0] == "72" and rows[1][5] == "https://www.linkedin.com/jobs/view/42/"

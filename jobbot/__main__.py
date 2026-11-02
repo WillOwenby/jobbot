@@ -39,7 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     p_report.add_argument("--csv", help="also export to this CSV file")
 
     sub.add_parser("questions", help="list questions that blocked applications")
-    sub.add_parser("shortlist", help="good matches to apply to yourself on the company's site")
+    p_short = sub.add_parser("shortlist", help="good matches found by your runs, best fit first")
+    p_short.add_argument("--html", help="also write a page with clickable links (open it in your browser)")
+    p_short.add_argument("--csv", help="also write a spreadsheet (opens in Excel)")
     sub.add_parser("ai-answers", help="list answers the AI saved for reuse")
 
     args = parser.parse_args(argv)
@@ -108,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {r['fit_reason']}")
             for c in json.loads(r["concerns"] or "[]"):
                 print(f"  ! {c}")
+        from .export import write_csv, write_html
+        if args.html:
+            write_html(rows, args.html)
+            print(f"\nWrote {args.html}")
+        if args.csv:
+            write_csv(rows, args.csv)
+            print(f"Wrote {args.csv}")
         return 0
 
     if args.command == "questions":

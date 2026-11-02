@@ -7,3 +7,5 @@ __pycache__/
 .pytest_cache/
 *.docx
 *.zip
+shortlist.html
+shortlist.csv
