@@ -232,7 +232,8 @@ def test_shortlist_command(cfg, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(cli, "load_config", lambda path: cfg)
     assert cli.main(["shortlist"]) == 0
     out = capsys.readouterr().out
-    assert "[77/100] Python Developer @ Acme" in out and "https://x" in out and "! salary not listed" in out
+    assert "[77/100] Python Developer @ Acme" in out and "[company site]" in out
+    assert "https://x" in out and "! salary not listed" in out
 
 
 def test_duplicate_listing_is_not_scored_twice(cfg, tmp_path):
@@ -261,3 +262,12 @@ def test_no_easy_apply_skips_are_retried(cfg, tmp_path):
     assert not t.is_done(job)
     other = Job(**{**JOB.__dict__, "job_id": "99", "concerns": []})
     assert t.judged_duplicate(other) is None
+
+
+def test_shortlist_includes_easy_apply_dry_run_matches(cfg, tmp_path):
+    from jobbot.models import ApplyResult, Status
+    t = Tracker(str(tmp_path / "t.db"))
+    t.record(Job(**{**JOB.__dict__, "job_id": "1", "fit_score": 70, "concerns": []}), ApplyResult(Status.DRY_RUN))
+    t.record(Job(**{**JOB.__dict__, "job_id": "2", "fit_score": 80, "concerns": []}), ApplyResult(Status.APPLY_YOURSELF))
+    t.record(Job(**{**JOB.__dict__, "job_id": "3", "fit_score": 20, "concerns": []}), ApplyResult(Status.SKIPPED))
+    assert [r["job_id"] for r in t.shortlist()] == ["2", "1"]

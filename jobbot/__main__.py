@@ -100,9 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "shortlist":
         rows = tracker.shortlist()
         if not rows:
-            print("No apply-yourself jobs yet (turn on search.include_external_jobs).")
+            print("No matches yet. Run a dry run first.")
         for r in rows:
-            print(f"\n[{r['fit_score']}/100] {r['title']} @ {r['company']}  ({r['location']})")
+            how = "Easy Apply" if r["status"] == "dry_run" else "company site"
+            print(f"\n[{r['fit_score']}/100] {r['title']} @ {r['company']}  ({r['location']})  [{how}]")
             print(f"  {r['url']}")
             print(f"  {r['fit_reason']}")
             for c in json.loads(r["concerns"] or "[]"):

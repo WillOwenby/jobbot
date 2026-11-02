@@ -93,8 +93,8 @@ class Tracker:
         self.conn.row_factory = sqlite3.Row
         try:
             return self.conn.execute(
-                "SELECT * FROM applications WHERE status = ? ORDER BY fit_score DESC, updated_at DESC",
-                (Status.APPLY_YOURSELF.value,)).fetchall()
+                "SELECT * FROM applications WHERE status IN (?, ?) ORDER BY fit_score DESC, updated_at DESC",
+                (Status.APPLY_YOURSELF.value, Status.DRY_RUN.value)).fetchall()
         finally:
             self.conn.row_factory = None
 
