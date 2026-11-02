@@ -18,11 +18,11 @@ if "experience_file:" not in s:
     print("experience_file line added" if n else "!! could not find cover_letter_example; add experience_file by hand")
 else:
     print("experience_file already present")
-s, a = re.subn(r'(match: "years\.\*epic\|epic\.\*years", answer: )"\d+"', r'\1"8"', s)
+s, a = re.subn(r'(match: "years\.\*epic\|epic\.\*years", answer: )"\d+"', r'\1"10"', s)
 s, b = re.subn(r'(match: "years\.\*\(healthcare\|health care\)", answer: )"\d+"', r'\1"10"', s)
-s, c = re.subn(r'(match: "\^\(how many \)\?\(total \)\?years of [^"]*", answer: )"\d+"', r'\1"10"', s)
-print(f"Epic years -> 8: {'done' if a else 'NOT FOUND'}; healthcare years -> 10: {'done' if b else 'NOT FOUND'}; "
-      f"total years -> 10: {'done' if c else 'NOT FOUND'}")
+s, c = re.subn(r'(match: "\^\(how many \)\?\(total \)\?years of [^"]*", answer: )"\d+"', r'\1"19"', s)
+print(f"Epic years -> 10: {'done' if a else 'NOT FOUND'}; healthcare years -> 10: {'done' if b else 'NOT FOUND'}; "
+      f"total work years -> 19: {'done' if c else 'NOT FOUND'}")
 p.write_text(s, encoding="utf-8")
 from jobbot.config import load_config
 cfg = load_config("config.yaml")
