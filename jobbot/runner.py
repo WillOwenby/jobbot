@@ -28,6 +28,9 @@ def build_ai(cfg: Config):
     from .ai import ResumeAI, read_document_text
     example = read_document_text(cfg.ai.cover_letter_example) if cfg.ai.cover_letter_example else ""
     experience = read_document_text(cfg.ai.experience_file) if cfg.ai.experience_file else ""
+    if experience:
+        log.info("Using experience file %s (%d characters) alongside the resume",
+                 cfg.ai.experience_file, len(experience))
     return ResumeAI(cfg.ai, cfg.profile, read_document_text(cfg.profile.resume_path),
                     example_letter=example, experience_text=experience)
 
