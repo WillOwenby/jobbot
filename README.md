@@ -17,7 +17,7 @@ LinkedIn flags accounts that load many pages quickly. jobbot keeps your account 
 everything except applying:
 
 - **Searching and reading jobs** use LinkedIn's public, logged-out pages, fetched without
-  your cookies and at a few seconds per request. A `dry-run` never uses your login at all.
+  your cookies, 10–20 seconds apart. A `dry-run` never uses your login at all.
 - **Applying** (review/auto mode) opens the job in your logged-in browser: at most
   12 job pages per run, 45–90 seconds apart.
 - If LinkedIn shows a logged-out page, or says "too many requests", jobbot stops the run.

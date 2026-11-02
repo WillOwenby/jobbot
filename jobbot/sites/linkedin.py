@@ -35,8 +35,8 @@ LISTING_PAGE_SIZE = 10
 PAGE_SIZE = 25
 FEED_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/141.0 Safari/537.36")
-PUBLIC_DELAY = (3.0, 7.0)      # seconds between public requests
-RATE_LIMIT_WAIT = 120          # seconds to back off after a "too many requests" answer
+PUBLIC_DELAY = (10.0, 20.0)    # seconds between public requests
+RATE_LIMIT_WAIT = 300          # seconds to back off after a "too many requests" answer
 
 # Limits on the logged-in browser, whatever the config says.
 MAX_LOGGED_IN_PAGES = 12       # job pages per run
