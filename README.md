@@ -62,6 +62,10 @@ python -m jobbot shortlist --html shortlist.html --csv shortlist.csv   # best ma
 
 Start with `dry-run`, then use `review` for a while. Only switch to `auto` once `jobbot questions` comes back mostly empty and you trust the answers in `jobbot ai-answers`.
 
+## Phone app
+
+`python -m jobbot sheet` copies the shortlist to a Google Sheet that a free AppSheet app shows on your phone, where you mark jobs Applied / Not interested. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md).
+
 ## How questions get answered
 
 For each form field, jobbot tries these in order:

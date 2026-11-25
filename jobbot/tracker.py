@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE TABLE IF NOT EXISTS ai_answers (
     question TEXT PRIMARY KEY, answer TEXT, created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS descriptions (
+    key TEXT PRIMARY KEY, description TEXT
+);
+CREATE TABLE IF NOT EXISTS user_status (
+    key TEXT PRIMARY KEY, status TEXT, updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS state (
     name TEXT PRIMARY KEY, value TEXT
 );
@@ -25,6 +31,8 @@ CREATE TABLE IF NOT EXISTS state (
 DONE = (Status.APPLIED.value, Status.ALREADY_APPLIED.value)
 # Jobs already judged; not re-scored on later runs unless --recheck is passed.
 JUDGED = DONE + (Status.SKIPPED.value, Status.FLAGGED.value, Status.APPLY_YOURSELF.value)
+SHORTLIST = (Status.APPLY_YOURSELF.value, Status.DRY_RUN.value)
+USER_DONE = ("Applied", "Interviewing", "Not interested")
 UNSCORED_PREFIXES = ("not scored", "couldn't read the job description")
 # Skips that depended on the page (e.g. logged out), so they're looked at again next run.
 RETRY_SKIPS = ("no Easy Apply button",)
@@ -43,8 +51,23 @@ class Tracker:
         self.conn.execute("INSERT OR REPLACE INTO state VALUES (?, ?)", (name, value))
         self.conn.commit()
 
+    def set_user_status(self, key: str, status: str) -> None:
+        """Status you set in the Google Sheet / phone app (New, Applied, Interviewing, ...)."""
+        old = self.conn.execute("SELECT status FROM user_status WHERE key = ?", (key,)).fetchone()
+        if old and old[0] == status:
+            return
+        self.conn.execute("INSERT OR REPLACE INTO user_status VALUES (?,?,?)",
+                          (key, status, datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        self.conn.commit()
+
+    def user_status(self, key: str) -> str:
+        row = self.conn.execute("SELECT status FROM user_status WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else ""
+
     def is_done(self, job: Job, recheck: bool = False, dry_run: bool = False) -> bool:
         row = self.conn.execute("SELECT status, detail FROM applications WHERE key = ?", (job.key,)).fetchone()
+        if self.user_status(job.key) in USER_DONE:
+            return True  # you marked it in the phone app; never apply to it again
         if not row:
             return False
         status, detail = row
@@ -84,7 +107,14 @@ class Tracker:
              job.fit_score, job.fit_reason, json.dumps(job.concerns),
              datetime.now(timezone.utc).isoformat(timespec="seconds")),
         )
+        if job.description and result.status.value in SHORTLIST:
+            # Kept so a cover letter can be written later (e.g. for the Google Sheet).
+            self.conn.execute("INSERT OR REPLACE INTO descriptions VALUES (?, ?)", (job.key, job.description))
         self.conn.commit()
+
+    def description(self, key: str) -> str:
+        row = self.conn.execute("SELECT description FROM descriptions WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else ""
 
     def rows(self) -> list[sqlite3.Row]:
         self.conn.row_factory = sqlite3.Row
@@ -107,7 +137,7 @@ class Tracker:
         try:
             return self.conn.execute(
                 "SELECT * FROM applications WHERE status IN (?, ?) ORDER BY fit_score DESC, updated_at DESC",
-                (Status.APPLY_YOURSELF.value, Status.DRY_RUN.value)).fetchall()
+                SHORTLIST).fetchall()
         finally:
             self.conn.row_factory = None
 

@@ -10,3 +10,6 @@ __pycache__/
 shortlist.html
 shortlist.csv
 experience.txt
+google-client-secret.json
+google-token.json
+client_secret*.json

@@ -89,3 +89,8 @@ follow_companies: false        # untick LinkedIn's "follow company" box
 indeed_domain: www.indeed.com  # e.g. uk.indeed.com, ca.indeed.com
 database: jobbot.db
 output_dir: output
+
+# Google Sheet + phone app (see GOOGLE_SETUP.md). Both files stay on your PC and out of git.
+google_client_secret: google-client-secret.json
+google_token: google-token.json
+sheet_title: jobbot shortlist

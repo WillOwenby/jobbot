@@ -95,6 +95,9 @@ class Config:
     output_dir: str = "output"
     follow_companies: bool = False
     indeed_domain: str = "www.indeed.com"
+    google_client_secret: str = "google-client-secret.json"
+    google_token: str = "google-token.json"
+    sheet_title: str = "jobbot shortlist"
 
 
 def _build(cls, data, section):
@@ -154,6 +157,8 @@ def load_config(path: str | Path) -> Config:
     cfg.output_dir = resolve(cfg.output_dir)
     cfg.ai.cover_letter_example = resolve(cfg.ai.cover_letter_example)
     cfg.ai.experience_file = resolve(cfg.ai.experience_file)
+    cfg.google_client_secret = resolve(cfg.google_client_secret)
+    cfg.google_token = resolve(cfg.google_token)
     if not Path(cfg.profile.resume_path).is_file():
         raise ValueError(f"resume not found: {cfg.profile.resume_path}")
     return cfg

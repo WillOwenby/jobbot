@@ -5,6 +5,8 @@
     python -m jobbot run --mode dry-run      # search, filter and score, but don't apply
     python -m jobbot report --csv out.csv    # what was applied to / skipped and why
     python -m jobbot questions               # questions you should add answers for
+    python -m jobbot google-login            # one-time Google sign-in (Gmail read-only + jobbot's own sheet)
+    python -m jobbot sheet                   # copy the shortlist to the Google Sheet the phone app uses
 """
 from __future__ import annotations
 
@@ -43,6 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     p_short.add_argument("--html", help="also write a page with clickable links (open it in your browser)")
     p_short.add_argument("--csv", help="also write a spreadsheet (opens in Excel)")
     sub.add_parser("ai-answers", help="list answers the AI saved for reuse")
+    sub.add_parser("google-login", help="sign in to Google once (read-only Gmail + the jobbot sheet)")
+    p_sheet = sub.add_parser("sheet", help="copy the shortlist to the Google Sheet behind the phone app")
+    p_sheet.add_argument("--no-letters", action="store_true",
+                         help="don't write tailored cover letters for new rows")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -84,8 +90,32 @@ def main(argv: list[str] | None = None) -> int:
         print("\nSummary: " + (", ".join(f"{k}={v}" for k, v in sorted(stats.items())) or "nothing processed"))
         return 0
 
+    if args.command == "google-login":
+        from .google_auth import GoogleNotConnected, credentials
+        try:
+            credentials(cfg.google_client_secret, cfg.google_token, interactive=True)
+        except GoogleNotConnected as e:
+            print(e)
+            return 1
+        print(f"Signed in to Google. Saved to {cfg.google_token}")
+        return 0
+
     from .tracker import Tracker
     tracker = Tracker(cfg.database)
+
+    if args.command == "sheet":
+        from .google_auth import GoogleNotConnected, build_service, credentials
+        from .sheet import SheetSync
+        try:
+            creds = credentials(cfg.google_client_secret, cfg.google_token)
+        except GoogleNotConnected as e:
+            print(e)
+            return 1
+        letter = None if args.no_letters else _letter_writer(cfg, tracker)
+        result = SheetSync(build_service("sheets", "v4", creds), tracker, cfg.sheet_title).sync(
+            tracker.shortlist(), letter)
+        print(f"Sheet updated: {result['added']} new, {result['updated']} refreshed.\n{result['url']}")
+        return 0
 
     if args.command == "report":
         rows = tracker.rows()
@@ -132,6 +162,34 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Q: {q}\nA: {a}\n")
         return 0
     return 1
+
+
+def _letter_writer(cfg, tracker):
+    """cover_letter(row) for the sheet: a tailored letter from the saved job description."""
+    from .ai import AIError, AIFatalError
+    from .models import Job
+    from .runner import build_ai
+    ai = build_ai(cfg)
+    if not ai or not cfg.ai.cover_letters:
+        return None
+    stopped = []
+
+    def write(row) -> str:
+        description = tracker.description(row["key"])
+        if stopped or not description:
+            return ""
+        job = Job(site=row["site"], job_id=row["job_id"], title=row["title"], company=row["company"],
+                  location=row["location"], url=row["url"], description=description)
+        print(f"  writing cover letter: {row['title']} @ {row['company']}")
+        try:
+            return ai.cover_letter(job)
+        except AIFatalError as e:
+            print(f"  stopped writing cover letters: {e}")
+            stopped.append(e)
+        except AIError as e:
+            print(f"  could not write cover letter: {e}")
+        return ""
+    return write
 
 
 if __name__ == "__main__":
