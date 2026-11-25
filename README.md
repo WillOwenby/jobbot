@@ -62,7 +62,11 @@ python -m jobbot shortlist --html shortlist.html --csv shortlist.csv   # best ma
 
 Start with `dry-run`, then use `review` for a while. Only switch to `auto` once `jobbot questions` comes back mostly empty and you trust the answers in `jobbot ai-answers`.
 
-## Phone app
+## Fit Finder (phone app, no applying)
+
+`python -m jobbot.finder` searches LinkedIn's public job pages, Himalayas and companies' public job boards (Greenhouse, Lever, Ashby) for jobs matching your search terms, without logging in. A scheduled Claude session scores them against your resume and keeps the good fits in a private claude.ai app you open on your phone. See [FINDER_RUNBOOK.md](FINDER_RUNBOOK.md). Your resume and settings live in the app's private storage, not in this repo.
+
+## Phone app (Google Sheet, older)
 
 `python -m jobbot sheet` copies the shortlist to a Google Sheet that a free AppSheet app shows on your phone, where you mark jobs Applied / Not interested. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md).
 

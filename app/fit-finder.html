@@ -1,0 +1,291 @@
+<title>Fit Finder</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: one column of job cards under a sticky header with status tabs; phone first, centered at 720px on desktop. */
+:root {
+  --bg: #eef2f1;
+  --surface: #ffffff;
+  --ink: #15211e;
+  --muted: #5b6b66;
+  --line: #d7e0dd;
+  --accent: #0b6b5d;
+  --accent-ink: #ffffff;
+  --accent-soft: #dcefea;
+  --good: #1d7a45;
+  --good-soft: #def2e5;
+  --mid: #9a6400;
+  --mid-soft: #fbefd6;
+  --flag: #a8432b;
+  --flag-soft: #f9e3dc;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1614; --surface: #17201e; --ink: #e5ede9; --muted: #98a8a2; --line: #2a3632;
+    --accent: #4cc2ac; --accent-ink: #062520; --accent-soft: #173a33;
+    --good: #6fd497; --good-soft: #193a26; --mid: #f0b754; --mid-soft: #3d2e12;
+    --flag: #f08f76; --flag-soft: #3f2119; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1614; --surface: #17201e; --ink: #e5ede9; --muted: #98a8a2; --line: #2a3632;
+  --accent: #4cc2ac; --accent-ink: #062520; --accent-soft: #173a33;
+  --good: #6fd497; --good-soft: #193a26; --mid: #f0b754; --mid-soft: #3d2e12;
+  --flag: #f08f76; --flag-soft: #3f2119; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+.wrap { max-width: 720px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-block: 14px 8px; flex-wrap: wrap; }
+h1 { font-family: var(--font-display); font-size: 1.35rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+.run { color: var(--muted); font-size: 0.8rem; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; padding-block: 0 10px; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { flex: none; border: 1px solid var(--line); background: transparent; color: var(--muted); font: 500 0.85rem var(--font-body); padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.tab[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.tab .n { font-variant-numeric: tabular-nums; opacity: 0.75; margin-left: 4px; }
+.tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-block: 12px 4px; color: var(--muted); font-size: 0.82rem; }
+.tools select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+main { display: flex; flex-direction: column; gap: 10px; padding-block: 8px 48px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.top { display: grid; grid-template-columns: 52px 1fr; gap: 12px; padding: 14px; cursor: pointer; align-items: start; width: 100%; background: none; border: 0; color: inherit; text-align: left; font: inherit; }
+.top:focus-visible, .btn:focus-visible, .tab:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fit { width: 52px; height: 52px; border-radius: 12px; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 1.3rem; font-variant-numeric: tabular-nums; line-height: 1; }
+.fit small { display: block; font-size: 0.55rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-top: 3px; text-align: center; }
+.fit.hi { background: var(--good-soft); color: var(--good); }
+.fit.md { background: var(--mid-soft); color: var(--mid); }
+.fit.fl { background: var(--flag-soft); color: var(--flag); }
+.info { min-width: 0; }
+.title { font-weight: 600; font-size: 1rem; line-height: 1.3; margin: 0; text-wrap: balance; overflow-wrap: anywhere; }
+.co { color: var(--muted); font-size: 0.86rem; margin-top: 2px; overflow-wrap: anywhere; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { font-size: 0.72rem; font-weight: 500; padding: 2px 8px; border-radius: 6px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.chip.pay { color: var(--good); border-color: transparent; background: var(--good-soft); }
+.chip.warn { color: var(--flag); border-color: transparent; background: var(--flag-soft); }
+.chip.st { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
+.more { border-top: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+.why { margin: 0; }
+ul.concerns { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { font: 600 0.85rem var(--font-body); padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.letter { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font-size: 0.88rem; max-height: 320px; overflow-y: auto; }
+textarea { width: 100%; min-height: 64px; font: inherit; font-size: 0.9rem; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; resize: vertical; }
+.note { color: var(--muted); font-size: 0.82rem; margin: 0; }
+.empty { text-align: center; color: var(--muted); padding: 48px 16px; }
+.empty h2 { font-family: var(--font-display); color: var(--ink); font-size: 1.1rem; margin: 0 0 6px; }
+.banner { background: var(--mid-soft); color: var(--mid); border-radius: 10px; padding: 8px 12px; font-size: 0.85rem; }
+@media (prefers-reduced-motion: no-preference) { .card { transition: border-color .15s; } }
+</style>
+
+<header>
+  <div class="wrap">
+    <div class="head">
+      <h1>Fit Finder</h1>
+      <span class="run" id="run">Waiting for the first search</span>
+    </div>
+    <nav class="tabs" id="tabs" aria-label="Filter jobs"></nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tools">
+    <span id="count">Loading matches…</span>
+    <label>Sort <select id="sort">
+      <option value="fit">Best fit</option>
+      <option value="found">Newest</option>
+    </select></label>
+  </div>
+  <div id="banner" class="banner" hidden></div>
+  <main id="list">
+    <div class="empty"><h2>Loading your matches</h2><p>Jobs scored against your resume appear here.</p></div>
+  </main>
+</div>
+
+<script>
+const TABS = [
+  { id: "new", label: "New", test: j => !j.status || j.status === "new" },
+  { id: "saved", label: "Saved", test: j => j.status === "saved" },
+  { id: "applied", label: "Applied", test: j => j.status === "applied" || j.status === "interviewing" },
+  { id: "passed", label: "Passed", test: j => j.status === "passed" },
+  { id: "all", label: "All", test: () => true },
+];
+const SOURCE = { linkedin: "LinkedIn", himalayas: "Himalayas", "company site": "Company site" };
+const state = { jobs: [], tab: "new", sort: "fit", open: new Set(), db: null, readOnly: false, run: null };
+try { state.tab = localStorage.getItem("ff-tab") || "new"; state.sort = localStorage.getItem("ff-sort") || "fit"; } catch (e) {}
+
+const $ = (sel, root = document) => root.querySelector(sel);
+function el(tag, attrs = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid);
+  return n;
+}
+const safeUrl = u => (typeof u === "string" && u.startsWith("https://")) ? u : null;
+function ago(iso) {
+  if (!iso) return "";
+  const d = new Date(iso); if (isNaN(d)) return "";
+  const days = Math.floor((Date.now() - d) / 86400000);
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
+}
+function when(iso) {
+  const d = new Date(iso); if (isNaN(d)) return "";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function renderTabs() {
+  const nav = $("#tabs"); nav.replaceChildren();
+  for (const t of TABS) {
+    const n = state.jobs.filter(t.test).length;
+    nav.append(el("button", { class: "tab", "aria-pressed": String(state.tab === t.id), onclick: () => {
+      state.tab = t.id; try { localStorage.setItem("ff-tab", t.id); } catch (e) {} render();
+    } }, t.label, el("span", { class: "n", text: String(n) })));
+  }
+}
+
+function fitBox(j) {
+  const flagged = j.flag || (j.concerns || []).length >= 3;
+  const cls = j.fit >= 80 ? "hi" : j.fit >= 65 ? "md" : "fl";
+  return el("div", { class: `fit ${cls}`, "aria-label": `Fit ${j.fit} out of 100` },
+    el("div", {}, String(j.fit ?? "–"), el("small", { text: flagged ? "check" : "fit" })));
+}
+
+async function save(j, patch, btn) {
+  if (!state.db || state.readOnly) return;
+  if (btn) btn.disabled = true;
+  try {
+    await state.db.doc("jobs/" + j.id).update({ ...patch, updated_at: new Date().toISOString() });
+  } catch (e) {
+    if (e && e.code === "invalid_argument") { state.readOnly = true; showBanner("This copy is read-only. Open it from your own claude.ai account to update jobs."); }
+    else showBanner("Couldn't save that change. Check your connection and try again.");
+  } finally { if (btn) btn.disabled = false; }
+}
+function showBanner(msg) { const b = $("#banner"); b.textContent = msg; b.hidden = !msg; }
+
+function statusButtons(j) {
+  const opts = [["saved", "Save"], ["applied", "Applied"], ["interviewing", "Interviewing"], ["passed", "Not interested"]];
+  return opts.map(([s, label]) => el("button", { class: "btn", "aria-pressed": String(j.status === s), disabled: state.readOnly,
+    onclick: e => save(j, { status: j.status === s ? "new" : s }, e.currentTarget) }, label));
+}
+
+function letterBlock(j) {
+  const box = el("div", {}, el("p", { class: "label", text: "Cover letter" }));
+  if (j.letter) {
+    const copy = el("button", { class: "btn", onclick: async e => {
+      const b = e.currentTarget;
+      try { await navigator.clipboard.writeText(j.letter); b.textContent = "Copied"; }
+      catch (err) { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Selected: copy it"; }
+      setTimeout(() => { b.textContent = "Copy letter"; }, 2000);
+    } }, "Copy letter");
+    const pre = el("div", { class: "letter", text: j.letter });
+    box.append(pre, el("div", { class: "actions", style: "margin-top:8px" }, copy,
+      el("button", { class: "btn", disabled: state.readOnly, onclick: e => save(j, { letter_state: "requested" }, e.currentTarget) }, "Rewrite")));
+    if (j.letter_state === "requested") box.append(el("p", { class: "note", text: "A new version will be written at the next update." }));
+  } else if (j.letter_state === "requested") {
+    box.append(el("p", { class: "note", text: "Requested. It'll be written from your master letter at the next update." }));
+  } else {
+    box.append(el("button", { class: "btn", disabled: state.readOnly, onclick: e => save(j, { letter_state: "requested" }, e.currentTarget) }, "Write a cover letter"));
+  }
+  return box;
+}
+
+function notesBlock(j) {
+  let timer;
+  const ta = el("textarea", { id: "notes-" + j.id, placeholder: "Recruiter name, follow-up date…", disabled: state.readOnly });
+  ta.value = j.notes || "";
+  ta.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { if (ta.value !== (j.notes || "")) save(j, { notes: ta.value }); }, 900); });
+  return el("div", {}, el("label", { class: "label", for: "notes-" + j.id, text: "Notes" }), ta);
+}
+
+function card(j) {
+  const open = state.open.has(j.id);
+  const chips = [
+    el("span", { class: "chip", text: SOURCE[j.source] || j.source || "" }),
+    j.salary ? el("span", { class: "chip pay", text: j.salary }) : el("span", { class: "chip", text: "No salary listed" }),
+    j.posted ? el("span", { class: "chip", text: "Posted " + ago(j.posted) }) : j.found ? el("span", { class: "chip", text: "Found " + ago(j.found) }) : null,
+    j.flag ? el("span", { class: "chip warn", text: "Needs a check" }) : null,
+    j.letter ? el("span", { class: "chip st", text: "Letter ready" }) : null,
+    (j.status && j.status !== "new" && state.tab === "all") ? el("span", { class: "chip st", text: j.status }) : null,
+  ];
+  const top = el("button", { class: "top", "aria-expanded": String(open), onclick: () => {
+    open ? state.open.delete(j.id) : state.open.add(j.id); render();
+  } }, fitBox(j), el("div", { class: "info" },
+    el("p", { class: "title", text: j.title || "Untitled role" }),
+    el("div", { class: "co", text: [j.company, j.location].filter(Boolean).join(" · ") }),
+    el("div", { class: "chips" }, chips)));
+  const c = el("article", { class: "card" }, top);
+  if (open) {
+    const url = safeUrl(j.url);
+    c.append(el("div", { class: "more" },
+      el("div", {}, el("p", { class: "label", text: "Why it fits" }), el("p", { class: "why", text: j.reason || "" })),
+      (j.concerns || []).length ? el("div", {}, el("p", { class: "label", text: "Check before applying" }),
+        el("ul", { class: "concerns" }, j.concerns.map(x => el("li", { text: String(x) })))) : null,
+      el("div", { class: "actions" },
+        url ? el("a", { class: "btn primary", href: url, target: "_blank", rel: "noopener" }, "Open posting ↗") : null,
+        statusButtons(j)),
+      letterBlock(j),
+      notesBlock(j)));
+  }
+  return c;
+}
+
+function render() {
+  renderTabs();
+  $("#sort").value = state.sort;
+  const tab = TABS.find(t => t.id === state.tab) || TABS[0];
+  let rows = state.jobs.filter(tab.test);
+  rows.sort(state.sort === "fit" ? (a, b) => (b.fit || 0) - (a.fit || 0) || String(b.found).localeCompare(String(a.found))
+                                  : (a, b) => String(b.found || "").localeCompare(String(a.found || "")) || (b.fit || 0) - (a.fit || 0));
+  $("#count").textContent = `${rows.length} ${rows.length === 1 ? "job" : "jobs"}`;
+  const list = $("#list");
+  if (!rows.length) {
+    const msg = state.jobs.length
+      ? ["Nothing here", "Jobs you mark show up in the other tabs."]
+      : ["No matches yet", "Fit Finder searches LinkedIn, Himalayas and company job boards twice a day and lists jobs that fit your resume and rules."];
+    list.replaceChildren(el("div", { class: "empty" }, el("h2", { text: msg[0] }), el("p", { text: msg[1] })));
+    return;
+  }
+  list.replaceChildren(...rows.map(card));
+}
+
+function renderRun() {
+  const r = state.run;
+  if (!r || !r.at) return;
+  const added = Number(r.added || 0);
+  $("#run").textContent = `Updated ${when(r.at)} · ${added} new`;
+}
+
+$("#sort").addEventListener("change", e => { state.sort = e.target.value; try { localStorage.setItem("ff-sort", state.sort); } catch (err) {} render(); });
+
+(async () => {
+  const db = await (window.claude?.use ? window.claude.use("db") : null);
+  if (!db) {
+    $("#count").textContent = "";
+    $("#list").replaceChildren(el("div", { class: "empty" }, el("h2", { text: "Sign in to see your matches" }),
+      el("p", { text: "Open this page from your claude.ai account. Your matches are stored there." })));
+    return;
+  }
+  state.db = db;
+  const slow = setTimeout(() => showBanner("Still loading. Your matches may be out of date until the connection catches up."), 10000);
+  db.collection("jobs").onSnapshot(snap => {
+    if (!snap.metadata.fromCache) { clearTimeout(slow); showBanner(""); }
+    state.jobs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+  }, err => { clearTimeout(slow); showBanner("Couldn't load your matches right now. Reopen the page to try again."); });
+  db.doc("meta/run").onSnapshot(snap => { state.run = snap.exists ? snap.data() : null; renderRun(); }, () => {});
+})();
+</script>
